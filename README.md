@@ -48,6 +48,21 @@ Bundled profiles:
 - on-device MCU firmware generator for voltage/frequency experiments
 - firmware upload/apply flow for external MCU artifacts
 
+## Support And Feedback
+
+If you hit a bug, regression, hardware-compatibility problem, or unclear behavior, please open a GitHub issue in this repository.
+
+Useful issue attachments:
+
+- dashboard screenshot
+- admin screenshot
+- support bundle
+- miner log excerpt
+- debug UART excerpt
+- PMBus telemetry excerpt
+
+The project benefits much more from a clean issue with evidence than from off-platform reports with partial context.
+
 ## Quick Start
 
 1. Build or obtain the SD flasher image.
@@ -58,6 +73,12 @@ Bundled profiles:
 6. Open the dashboard, then log in to the Admin page with `admin` / `admin`.
 7. Change the password before wider deployment.
 8. Configure pool settings and confirm the miner is accepting shares on the safe profile.
+
+## Performance Expectations
+
+The bundled public profiles are meant to provide a usable baseline, not guarantee the absolute best result on every unit.
+
+If your goal is to beat stock performance consistently, it is critical to try self-overclocking on your own hardware. Board variance, cooling, silicon behavior, and pool conditions all matter. Use the safe and balanced profiles as a starting point, then use the on-device MCU generator and measured validation runs to find what your miner will actually hold.
 
 ## Documentation
 
