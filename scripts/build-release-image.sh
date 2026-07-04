@@ -21,11 +21,11 @@ SYNC_ROOT="$ROOT/work/release-sync"
 RELEASE_VERSION="${RELEASE_VERSION:-1.2.0}"
 MINER_VERSION="${MINER_VERSION:-G1M-1.2.0}"
 COMPAT_TAG="${COMPAT_TAG:-stock-host-h3-mini-g22}"
-RELEASE_BASENAME="G1M-${RELEASE_VERSION}-flasher"
+RELEASE_BASENAME="G1M-${RELEASE_VERSION}"
 STOCK_IMG="$ROOT/firmware-images/iPolloG1-TFcard-sysupgrade-squashfs-firmware.img"
 STOCK_SQFS="$ROOT/firmware-images/partitions/root_squashfs.img"
 SRC_OWRT="$OUT/owrt25-rootfs-extracted"
-WORK=/tmp/g1m-v028-flasher-rootfs
+WORK=/tmp/g1m-release-rootfs
 ROOTFS="$OUT/${RELEASE_BASENAME}-rootfs.squashfs"
 IMG="$OUT/${RELEASE_BASENAME}.img"
 GZ="$OUT/${RELEASE_BASENAME}.img.gz"
@@ -479,7 +479,7 @@ rm -f etc/rc.d/S12rpcd etc/rc.d/S19dnsmasq etc/rc.d/S19firewall etc/rc.d/S35odhc
 
 cd /
 find "$WORK/dev" \( -type c -o -type b \) -delete 2>/dev/null || true
-mksquashfs "$WORK" "$ROOTFS" -noappend -comp xz -b 262144 -all-root >/tmp/g1m-v028-flasher-mksquashfs.log
+mksquashfs "$WORK" "$ROOTFS" -noappend -comp xz -b 262144 -all-root >/tmp/g1m-release-mksquashfs.log
 ROOTFS_SIZE="$(stat -c '%s' "$ROOTFS")"
 SPI_ROOTFS_LIMIT=$((0x00bf0000))
 SPI_TOTAL_SIZE=$((16 * 1024 * 1024))
@@ -529,7 +529,7 @@ Built: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
 - Miner version: \`$MINER_VERSION\`
 - Compatibility tag: \`$COMPAT_TAG\`
 - Base: stock vendor SD image/rootfs, not OpenWrt 25 rootfs.
-- This is the SD flasher variant. Booting this image from SD restores the stock \`factest\` autostart path so it writes the image's \`rootfs\`, \`kernel\`, \`dtb\`, and \`u-boot\` sections into internal SPI-NOR.
+- This is the public release image. Booting this image from SD restores the stock \`factest\` autostart path so it writes the image's \`rootfs\`, \`kernel\`, \`dtb\`, and \`u-boot\` sections into internal SPI-NOR.
 - Internal SPI-NOR fit check: the build fails if the release rootfs exceeds the live \`rootfs\` MTD partition size \`0x00bf0000\`; the full SD image is larger than 16 MB because it is only the source container.
 - Network defaults to DHCP, with optional static IP settings available from the admin page.
 - SSH and stock LuCI root/admin/iPollo password: \`admin\`.
@@ -565,7 +565,7 @@ Built: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
 - Custom miner avoids redundant immediate stats writes inside duplicate suppression paths; the normal frame-level stats write still records the event.
 - Custom MCU loader handles MCU firmware load directly with the stock-compatible I2C write semantics; no cgminer MCU preload fallback is used.
 - Custom miner autostart is on.
-- Stock \`factest\` autostart is intentionally enabled in this flasher image because the goal is to update internal SPI-NOR from SD.
+- Stock \`factest\` autostart is intentionally enabled in this release image because the goal is to update internal SPI-NOR from SD.
 - Stock \`cgminer\`, \`cgminer-api\`, \`cgminer-monitor\`, and \`appmonitor\` binaries are removed from the rootfs.
 - Pool, fan, telemetry, and profile settings now live in dedicated \`/etc/config/g1m\`; vendor \`cgminer.default\` is no longer the primary runtime config store.
 - Admin login defaults to \`admin/admin\` and stays authenticated by browser cookie session.

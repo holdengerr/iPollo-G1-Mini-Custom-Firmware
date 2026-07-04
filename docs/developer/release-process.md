@@ -4,7 +4,7 @@
 
 Produce a release image that is:
 
-- flashable by SD card
+- installable from SD card
 - verified on real hardware
 - documented enough for third-party operators
 - identifiable by version, date, and checksum
@@ -12,7 +12,7 @@ Produce a release image that is:
 ## Release Checklist
 
 1. Update release version strings in the build path.
-2. Build the flasher image locally.
+2. Build the release image locally.
 3. Flash the image onto a real G1 Mini.
 4. Verify:
    - login works
@@ -54,4 +54,3 @@ Do not publish:
 - large generated binaries inside git history
 
 Keep those as local inputs or release artifacts outside the tracked source tree.
-

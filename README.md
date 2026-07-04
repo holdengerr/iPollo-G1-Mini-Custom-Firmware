@@ -80,7 +80,7 @@ The project benefits much more from a clean issue with evidence than from off-pl
 
 ## Quick Start
 
-1. Build or obtain the SD flasher image.
+1. Build or obtain the release image.
 2. Write it to an SD card.
 3. Boot the miner from the SD card and let it flash internal SPI-NOR.
 4. Remove the SD card and reboot from internal flash.
@@ -113,7 +113,6 @@ Developer documentation:
 
 - [Build Notes](docs/developer/building.md)
 - [Release Process](docs/developer/release-process.md)
-- [Repo Status](docs/developer/repo-status.md)
 
 ## Repository Layout
 
@@ -145,29 +144,19 @@ docs/
   developer/
 
 inputs/
-  local non-redistributable vendor inputs; not committed
+  local non-redistributable vendor inputs
 
 dist/
-  local build outputs; not committed
+  local build outputs
 ```
 
 ## Local Build Inputs
 
 See [inputs/README.md](inputs/README.md).
 
-At minimum, local release builds need:
+At minimum, local builds need:
 
-- stock vendor SD flasher image
+- stock vendor base image
 - stock squashfs rootfs image
 - local helper binaries or a native helper build path
 - local MCU firmware/profile binaries used by the public release
-
-## Shipping Notes
-
-This repo is intended to become the public custom-firmware repository. Before publishing a new release:
-
-1. verify the exact image on hardware
-2. verify Admin, Dashboard, and Metrics pages on multiple browsers
-3. verify pool save, password change, profile apply, and recovery paths
-4. verify PMBus and optional debug UART readback degrade cleanly when absent
-5. record checksums and release notes

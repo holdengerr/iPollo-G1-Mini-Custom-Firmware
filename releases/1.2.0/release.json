@@ -1,8 +1,8 @@
 {
   "version": "1.2.0",
   "channel": "public",
-  "artifact_name": "G1M-1.2.0-flasher.img.gz",
-  "artifact_type": "sd-flasher-image",
+  "artifact_name": "G1M-1.2.0.img.gz",
+  "artifact_type": "release-image",
   "checksum_sha256": "4dfc13c9495cd916f6b64060cc3890c94a4a710dbf9ab73b845a6839fa1225b0",
   "default_network_mode": "dhcp",
   "default_login": {

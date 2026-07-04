@@ -12,9 +12,8 @@ This directory is intentionally metadata-only.
 
 It does **not** store:
 
-- flashable SD images
+- ready-to-flash release archives
 - compressed release blobs
 - vendor base images
 
 Ready-to-flash artifacts belong in the GitHub Releases tab instead.
-

@@ -2,10 +2,10 @@
 
 ## Flashing
 
-1. Write the flasher image to an SD card.
+1. Write the release image to an SD card.
 2. Power the miner off.
 3. Insert the SD card.
-4. Boot and allow the stock flasher path to write the image into SPI-NOR.
+4. Boot and allow the stock update path to write the image into SPI-NOR.
 5. Remove the SD card after flashing completes.
 6. Reboot the miner from internal flash.
 

@@ -23,7 +23,7 @@ It has already been tightened to prefer repo-local source files for shipped asse
 
 At a minimum:
 
-- vendor SD flasher image
+- vendor base image
 - vendor squashfs image
 - helper binaries or native helper build outputs
 - bundled MCU binaries used by the public profile set

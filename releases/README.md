@@ -1,6 +1,6 @@
 # Releases
 
-This directory tracks release metadata that should stay visible in the repository.
+This directory tracks release metadata that stays visible in the repository.
 
 Use it for:
 
@@ -9,7 +9,6 @@ Use it for:
 - machine-readable release metadata
 - asset naming conventions
 
-The actual flashable image files are **not** committed here.
+The actual ready-to-flash image files are **not** committed here.
 
 Operators should download ready-to-flash artifacts from the GitHub Releases tab for the repository.
-

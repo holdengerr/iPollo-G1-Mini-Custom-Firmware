@@ -10,7 +10,7 @@ Use the Admin page:
 
 If the web UI is unavailable:
 
-1. Boot a known-good SD flasher image.
+1. Boot a known-good release image from SD.
 2. Reflash internal SPI-NOR.
 3. Reboot and return to the supported admin flow.
 
