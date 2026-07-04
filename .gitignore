@@ -6,6 +6,8 @@ inputs/*
 *.squashfs
 *.bin
 *.json
+!releases/**/*.json
+!firmware-images/**/*.json
 *.log
 *.tmp
 __pycache__/

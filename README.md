@@ -22,6 +22,21 @@ Not included here:
 - generated release images
 - vendor images or extracted root filesystems that cannot be redistributed
 
+## Repo Structure vs Releases
+
+This repository is meant to support both of these workflows:
+
+1. inspect the live, up-to-date source files that make up the firmware image
+2. download a ready-to-flash image without rebuilding anything
+
+To make that clear:
+
+- `src/`, `scripts/`, `tools/`, and `firmware-images/` are the inspectable source/composition view
+- `releases/` contains tracked release metadata, notes, and checksums
+- the actual ready-to-flash image files are published in the GitHub **Releases** tab
+
+That gives users a clean download path without hiding how the image is built.
+
 ## Release Baseline
 
 Current public release target:
@@ -91,6 +106,8 @@ User documentation:
 - [Safe Tuning Rules](docs/user/safe-tuning.md)
 - [Support Matrix](docs/user/support-matrix.md)
 - [Known Limitations](docs/user/known-limitations.md)
+- [Firmware Images](firmware-images/README.md)
+- [Release Metadata](releases/README.md)
 
 Developer documentation:
 
@@ -116,6 +133,12 @@ tools/
 
 scripts/
   build-release-image.sh
+
+firmware-images/
+  release composition notes and bundled profile metadata
+
+releases/
+  release notes, checksums, metadata; binary flash images live in GitHub Releases
 
 docs/
   user/
