@@ -1,0 +1,554 @@
+#!/bin/sh
+
+PROFILE_DIR=/root/profiles
+PROFILE_JSON=/www/custom-miner-profile.json
+UPLOAD_DIR=/root/uploaded-firmware
+BASE_FIRMWARE=/root/firmware-base/Mini-G22-base.bin
+SESSION_DIR=/tmp/g1m-admin-sessions
+SESSION_TTL=604800
+ADMIN_USER=admin
+ADMIN_PASS=admin
+ADMIN_PASS_FILE=/etc/g1m-admin-password
+
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s/\n/\\n/g'; }
+url_decode() { printf '%b' "$(printf '%s' "$1" | sed 's/+/ /g; s/%/\\x/g')"; }
+read_body() { local len="${CONTENT_LENGTH:-0}"; case "$len" in *[!0-9]*|'') len=0 ;; esac; [ "$len" -gt 1048576 ] && len=1048576; dd bs=1 count="$len" 2>/dev/null; }
+safe_filename() { printf '%s' "$1" | tr -cd 'A-Za-z0-9._-'; }
+
+param_get() {
+	local name="$1" input="$2" pair key val
+	IFS='&'
+	for pair in $input; do
+		key="${pair%%=*}"
+		val="${pair#*=}"
+		if [ "$key" = "$name" ]; then
+			unset IFS
+			url_decode "$val"
+			return 0
+		fi
+	done
+	unset IFS
+	return 1
+}
+
+emit_headers() {
+	echo "Content-Type: application/json"
+	echo "Cache-Control: no-store"
+	[ -n "$1" ] && printf '%s\n' "$1"
+	echo
+}
+
+emit_json() { emit_headers "$2"; printf '%s\n' "$1"; }
+ok() { emit_json '{"ok":true,"message":"'"$(json_escape "$1")"'"}' "$2"; exit 0; }
+fail() { emit_json '{"ok":false,"error":"'"$(json_escape "$1")"'"}' "$2"; exit 0; }
+auth_required() { emit_json '{"ok":false,"auth_required":true,"error":"login required"}' ""; exit 0; }
+
+valid_ipv4() {
+	local ip="$1" oldifs octet
+	oldifs="$IFS"; IFS=.; set -- $ip; IFS="$oldifs"
+	[ $# -eq 4 ] || return 1
+	for octet in "$@"; do
+		case "$octet" in ''|*[!0-9]*) return 1 ;; esac
+		[ "$octet" -ge 0 ] && [ "$octet" -le 255 ] || return 1
+	done
+	return 0
+}
+
+ensure_core() { /usr/bin/g1m-config ensure >/dev/null 2>&1 || true; }
+
+cookie_get() {
+	local name="$1" cookies="${HTTP_COOKIE:-}" oldifs pair key val
+	oldifs="$IFS"; IFS=';'
+	for pair in $cookies; do
+		pair="$(printf '%s' "$pair" | sed 's/^[[:space:]]*//')"
+		key="${pair%%=*}"
+		val="${pair#*=}"
+		[ "$key" = "$name" ] && { IFS="$oldifs"; printf '%s\n' "$val"; return 0; }
+	done
+	IFS="$oldifs"
+	return 1
+}
+
+admin_password() {
+	if [ -f "$ADMIN_PASS_FILE" ]; then
+		sed -n '1p' "$ADMIN_PASS_FILE" 2>/dev/null
+	else
+		printf '%s\n' "$ADMIN_PASS"
+	fi
+}
+
+session_file() {
+	local sid="$1"
+	printf '%s/%s.session\n' "$SESSION_DIR" "$(printf '%s' "$sid" | tr -cd 'A-Za-z0-9')"
+}
+
+make_sid() {
+	if [ -r /proc/sys/kernel/random/uuid ]; then
+		cat /proc/sys/kernel/random/uuid | tr -d '-'
+	else
+		{ date +%s; ps; } | sha256sum | awk '{print $1}'
+	fi
+}
+
+current_sid() { cookie_get g1m_admin_sid; }
+
+session_valid() {
+	local sid="$1" file ts now
+	[ -n "$sid" ] || return 1
+	file="$(session_file "$sid")"
+	[ -f "$file" ] || return 1
+	ts="$(sed -n '1p' "$file" 2>/dev/null)"
+	case "$ts" in ''|*[!0-9]*) return 1 ;; esac
+	now="$(date +%s)"
+	[ $(( now - ts )) -le "$SESSION_TTL" ] || return 1
+	printf '%s\n%s\n' "$file" "$now"
+	return 0
+}
+
+touch_session() {
+	local sid="$1" file now user
+	set -- $(session_valid "$sid") || return 1
+	file="$1"; now="$2"; user="$(sed -n '2p' "$file" 2>/dev/null)"
+	[ -n "$user" ] || user="$ADMIN_USER"
+	printf '%s\n%s\n' "$now" "$user" > "$file"
+}
+
+require_session() {
+	local sid
+	sid="$(current_sid 2>/dev/null || true)"
+	session_valid "$sid" >/dev/null 2>&1 || auth_required
+	touch_session "$sid" >/dev/null 2>&1 || auth_required
+}
+
+clear_session_cookie() {
+	printf 'Set-Cookie: g1m_admin_sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax\r\n'
+}
+
+login() {
+	local body="$1" user pass sid header
+	user="$(param_get username "$body")"
+	pass="$(param_get password "$body")"
+	[ "$user" = "$ADMIN_USER" ] || fail "bad username or password"
+	[ "$pass" = "$(admin_password)" ] || fail "bad username or password"
+	mkdir -p "$SESSION_DIR" || fail "session storage unavailable"
+	sid="$(make_sid)"
+	printf '%s\n%s\n' "$(date +%s)" "$ADMIN_USER" > "$(session_file "$sid")"
+	header="Set-Cookie: g1m_admin_sid=$sid; Path=/; Max-Age=$SESSION_TTL; HttpOnly; SameSite=Lax"
+	emit_json '{"ok":true,"message":"logged in"}' "$header"
+	exit 0
+}
+
+change_password() {
+	local body="$1" current next confirm
+	current="$(param_get current_password "$body")"
+	next="$(param_get new_password "$body")"
+	confirm="$(param_get confirm_password "$body")"
+	[ "$current" = "$(admin_password)" ] || fail "current password is incorrect"
+	[ -n "$next" ] || fail "new password is required"
+	[ "$next" = "$confirm" ] || fail "new password confirmation does not match"
+	[ "${#next}" -ge 4 ] || fail "new password must be at least 4 characters"
+	printf '%s\n' "$next" > "$ADMIN_PASS_FILE" || fail "failed to save password"
+	chmod 600 "$ADMIN_PASS_FILE" 2>/dev/null || true
+	ok "admin password updated"
+}
+
+logout() {
+	local sid file
+	sid="$(current_sid 2>/dev/null || true)"
+	file="$(session_file "$sid")"
+	[ -f "$file" ] && rm -f "$file"
+	emit_json '{"ok":true,"message":"logged out"}' "$(clear_session_cookie)"
+	exit 0
+}
+
+profile_record() {
+	local id="$1"
+	case "$id" in
+		stable-1872-v1080)
+			echo "label='Stable 1872 MHz / Vddr 1300 / Vcore 1080'"
+			echo "firmware='$PROFILE_DIR/Mini-G22-stable-1872-v1080.bin'"
+			echo "profile='ddr9c-isl-vddr1300-vcore1080-bridge-telemetry'"
+			echo "class='safe'"
+			echo "ddr_raw='0x9c'"
+			echo "ddr_mhz='1872'"
+			echo "vddr_mv='1300'"
+			echo "vcore_mv='1080'"
+			;;
+		perf-2004-v1080)
+			echo "label='Performance 2004 MHz / Vddr 1300 / Vcore 1080'"
+			echo "firmware='$PROFILE_DIR/Mini-G22-perf-2004-v1080.bin'"
+			echo "profile='ddra7-isl-vddr1300-vcore1080-bridge-telemetry'"
+			echo "class='balanced'"
+			echo "ddr_raw='0xa7'"
+			echo "ddr_mhz='2004'"
+			echo "vddr_mv='1300'"
+			echo "vcore_mv='1080'"
+			;;
+		exp-2100-vddr1480-vcore1060)
+			echo "label='Experimental 2100 MHz / Vddr 1480 / Vcore 1060'"
+			echo "firmware='$PROFILE_DIR/Mini-G22-exp-2100-vddr1480-vcore1060.bin'"
+			echo "profile='ddraf-isl-vddr1480-vcore1060-bridge-telemetry'"
+			echo "class='experimental'"
+			echo "ddr_raw='0xaf'"
+			echo "ddr_mhz='2100'"
+			echo "vddr_mv='1480'"
+			echo "vcore_mv='1060'"
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+profile_json_list() {
+	local first=1 id label firmware profile class ddr_raw ddr_mhz vddr_mv vcore_mv
+	printf '['
+	for id in stable-1872-v1080 perf-2004-v1080 exp-2100-vddr1480-vcore1060; do
+		eval "$(profile_record "$id")"
+		[ "$first" = 0 ] && printf ','
+		first=0
+		printf '{"id":"%s","label":"%s","available":%s,"class":"%s","profile":"%s","ddr_raw":"%s","ddr_mhz":%s,"vddr_mv":%s,"vcore_mv":%s}' \
+			"$(json_escape "$id")" "$(json_escape "$label")" "$([ -f "$firmware" ] && echo true || echo false)" \
+			"$(json_escape "$class")" "$(json_escape "$profile")" "$(json_escape "$ddr_raw")" "$ddr_mhz" "$vddr_mv" "$vcore_mv"
+	done
+	printf ']'
+}
+
+uploaded_firmware_json_list() {
+	local first=1 firmware base manifest size manifest_ok
+	printf '['
+	for firmware in "$UPLOAD_DIR"/*.bin; do
+		[ -f "$firmware" ] || continue
+		base="$(basename "$firmware")"
+		manifest="${firmware%.bin}.json"
+		size="$(wc -c < "$firmware" 2>/dev/null | tr -d ' ')"
+		manifest_ok=false
+		if [ -f "$manifest" ] && /usr/bin/g1m-policy validate_manifest "$manifest" >/dev/null 2>&1; then manifest_ok=true; fi
+		[ "$first" = 0 ] && printf ','
+		first=0
+		printf '{"filename":"%s","path":"%s","size":%s,"manifest_present":%s,"manifest_valid":%s}' \
+			"$(json_escape "$base")" "$(json_escape "$firmware")" "${size:-0}" "$([ -f "$manifest" ] && echo true || echo false)" "$manifest_ok"
+	done
+	printf ']'
+}
+
+status_json() {
+	local pool_json network_json fan_auto fan_target fan_min fan_max fan_hard profile_json rail state_json release_json support_enabled telemetry_enabled telemetry_required telemetry_delay telemetry_interval debug_uart_enabled debug_uart_source debug_uart_file debug_uart_json accepted rejected duplicates ddr_raw ddr_mhz temp shares uptime_s miner_running helper_present telemetry_health telemetry_age telemetry_present host_marker image_marker custom_ddr_min custom_ddr_max custom_vddr_min custom_vddr_max custom_vcore_min custom_vcore_max
+	ensure_core
+	pool_json="$(/usr/bin/g1m-config pool-json 2>/dev/null || echo '{}')"
+	network_json="$(/usr/bin/g1m-config network-json 2>/dev/null || echo '{}')"
+	fan_auto="$(/usr/bin/g1m-config get fan_auto 1 2>/dev/null || echo 1)"
+	fan_target="$(/usr/bin/g1m-config get fan_target_c 65 2>/dev/null || echo 65)"
+	fan_min="$(/usr/bin/g1m-config get fan_min_percent 50 2>/dev/null || echo 50)"
+	fan_max="$(/usr/bin/g1m-config get fan_max_percent 100 2>/dev/null || echo 100)"
+	fan_hard="$(/usr/bin/g1m-config get fan_hard_c 70 2>/dev/null || echo 70)"
+	telemetry_enabled="$(/usr/bin/g1m-config get rail_telemetry_enabled 1 2>/dev/null || echo 1)"
+	telemetry_required="$(/usr/bin/g1m-config get rail_telemetry_required 0 2>/dev/null || echo 0)"
+	telemetry_delay="$(/usr/bin/g1m-config get rail_telemetry_start_delay_seconds 180 2>/dev/null || echo 180)"
+	telemetry_interval="$(/usr/bin/g1m-config get rail_telemetry_interval_seconds 30 2>/dev/null || echo 30)"
+	debug_uart_enabled="$(/usr/bin/g1m-config get debug_uart_readback_enabled 0 2>/dev/null || echo 0)"
+	debug_uart_source="$(/usr/bin/g1m-config get debug_uart_readback_source stock 2>/dev/null || echo stock)"
+	debug_uart_file="$(/usr/bin/g1m-config get debug_uart_readback_file /tmp/ttyS2-debug-raw.bin 2>/dev/null || echo /tmp/ttyS2-debug-raw.bin)"
+	debug_uart_json="$(/usr/bin/g1m-debug-readback "$debug_uart_file" 2>/dev/null || echo '{"ok":false,"error":"helper unavailable","source":"debug-uart"}')"
+	profile_json="$(cat "$PROFILE_JSON" 2>/dev/null)"
+	rail="$(cat /tmp/g1-rail-telemetry.json 2>/dev/null)"
+	state_json="$(/usr/bin/g1m-config state-json 2>/dev/null || echo '{}')"
+	release_json="$(/usr/bin/g1m-config release-json 2>/dev/null || echo '{}')"
+	support_enabled="$(/usr/bin/g1m-config get support_bundle_enabled 1 2>/dev/null || echo 1)"
+	accepted="$(jsonfilter -i /tmp/custom-miner-stats.json -e '@.accepted' 2>/dev/null || echo 0)"
+	rejected="$(jsonfilter -i /tmp/custom-miner-stats.json -e '@.rejected' 2>/dev/null || echo 0)"
+	duplicates="$(jsonfilter -i /tmp/custom-miner-stats.json -e '@.duplicate_result_frames' 2>/dev/null || echo 0)"
+	ddr_raw="$(jsonfilter -i /tmp/custom-miner-stats.json -e '@.mcu_ddr_raw_hex' 2>/dev/null)"
+	ddr_mhz="$(jsonfilter -i /tmp/custom-miner-stats.json -e '@.mcu_ddr_effective_mhz' 2>/dev/null)"
+	[ -n "$ddr_mhz" ] || ddr_mhz="$(jsonfilter -i /tmp/custom-miner-stats.json -e '@.mcu_ddr_effective' 2>/dev/null)"
+	temp="$(jsonfilter -i /tmp/custom-miner-stats.json -e '@.chip_temp_c' 2>/dev/null)"
+	shares="$(jsonfilter -i /tmp/custom-miner-stats.json -e '@.shares_per_min' 2>/dev/null)"
+	uptime_s="$(jsonfilter -i /tmp/custom-miner-stats.json -e '@.uptime_seconds' 2>/dev/null || echo 0)"
+	if ps w 2>/dev/null | grep -q '[c]ustom-grin-miner.lua'; then miner_running=true; else miner_running=false; fi
+	if [ -x /usr/bin/g1-railmon ]; then helper_present=true; else helper_present=false; fi
+	telemetry_health="unavailable"; telemetry_age=0; telemetry_present=false; telemetry_error=""
+	case "$rail" in
+		'{'*)
+			telemetry_present=true
+			telemetry_age="$(jsonfilter -s "$rail" -e '@.updated_epoch' 2>/dev/null || echo 0)"
+			telemetry_error="$(jsonfilter -s "$rail" -e '@.error' 2>/dev/null || true)"
+			case "$telemetry_age" in ''|*[!0-9]*) telemetry_age=0 ;; esac
+			if [ "$telemetry_age" -gt 0 ]; then telemetry_age=$(( $(date +%s) - telemetry_age )); else telemetry_age=0; fi
+			if [ "$telemetry_age" -le 120 ] && [ "$(jsonfilter -s "$rail" -e '@.ok' 2>/dev/null || echo false)" = "true" ]; then telemetry_health="fresh"
+			elif [ "$(jsonfilter -s "$rail" -e '@.ok' 2>/dev/null || echo false)" = "true" ]; then telemetry_health="stale"
+			elif [ "$telemetry_error" = "no_pmbus_values" ]; then telemetry_health="stock-mcu-no-pmbus"
+			else telemetry_health="invalid"; fi
+			;;
+	esac
+	host_marker="$(awk -F: '/^Hardware/{gsub(/^[ \t]+/,"",$2); print $2; exit}' /proc/cpuinfo 2>/dev/null || true)"
+	image_marker="$(head -n 1 /etc/g1m-version 2>/dev/null || true)"
+	custom_ddr_min="$(/usr/bin/g1m-policy custom_ddr_min_mhz 2>/dev/null || echo 1872)"
+	custom_ddr_max="$(/usr/bin/g1m-policy custom_ddr_max_mhz 2>/dev/null || echo 2220)"
+	custom_vddr_min="$(/usr/bin/g1m-policy custom_vddr_min_mv 2>/dev/null || echo 1200)"
+	custom_vddr_max="$(/usr/bin/g1m-policy custom_vddr_max_mv 2>/dev/null || echo 1600)"
+	custom_vcore_min="$(/usr/bin/g1m-policy custom_vcore_min_mv 2>/dev/null || echo 1000)"
+	custom_vcore_max="$(/usr/bin/g1m-policy custom_vcore_max_mv 2>/dev/null || echo 1100)"
+	printf '{"ok":true,"auth":{"logged_in":true,"user":"admin"},"miner_running":%s,"pool":%s,"network":%s,"fan_config":{"auto":"%s","target_c":%s,"min_percent":%s,"max_percent":%s,"hard_c":%s},"profiles":%s' \
+		"$miner_running" "$pool_json" "$network_json" "$(json_escape "$fan_auto")" "${fan_target:-55}" "${fan_min:-50}" "${fan_max:-100}" "${fan_hard:-70}" "$(profile_json_list)"
+	case "$profile_json" in '{'*) printf ',"profile":%s' "$profile_json" ;; *) printf ',"profile":{}' ;; esac
+	case "$rail" in '{'*) printf ',"rail":%s' "$rail" ;; *) printf ',"rail":{}' ;; esac
+	printf ',"g1m_state":%s,"release":%s,"support_bundle_enabled":%s,"telemetry":{"enabled":%s,"required":%s,"start_delay_seconds":%s,"interval_seconds":%s,"health":"%s","age_seconds":%s,"helper_present":%s,"telemetry_present":%s,"capability":"%s"}' \
+		"$state_json" "$release_json" "$([ "$support_enabled" = "1" ] && echo true || echo false)" \
+		"$([ "$telemetry_enabled" = "1" ] && echo true || echo false)" "$([ "$telemetry_required" = "1" ] && echo true || echo false)" \
+		"${telemetry_delay:-180}" "${telemetry_interval:-30}" "$(json_escape "$telemetry_health")" "${telemetry_age:-0}" "$helper_present" "$telemetry_present" "$(json_escape "$(
+			if [ "$telemetry_error" = "no_pmbus_values" ]; then
+				echo stock-mcu-no-pmbus
+			elif [ "$helper_present" = true ] && [ "$telemetry_enabled" = "1" ]; then
+				echo available
+			else
+				echo disabled-or-missing
+			fi
+		)")"
+	printf ',"readback":{"enabled":%s,"source":"%s","capture_file":"%s"},"debug_uart_readback":%s' \
+		"$([ "$debug_uart_enabled" = "1" ] && echo true || echo false)" "$(json_escape "$debug_uart_source")" "$(json_escape "$debug_uart_file")" "$debug_uart_json"
+	printf ',"uploaded_firmware":%s' "$(uploaded_firmware_json_list)"
+	printf ',"generator_limits":{"ddr_mhz_min":%s,"ddr_mhz_max":%s,"vddr_mv_min":%s,"vddr_mv_max":%s,"vcore_mv_min":%s,"vcore_mv_max":%s,"base_firmware_present":%s}' \
+		"${custom_ddr_min:-1872}" "${custom_ddr_max:-2220}" "${custom_vddr_min:-1200}" "${custom_vddr_max:-1600}" "${custom_vcore_min:-1000}" "${custom_vcore_max:-1100}" "$([ -f "$BASE_FIRMWARE" ] && echo true || echo false)"
+	printf ',"stats":{"accepted":%s,"rejected":%s,"duplicate_result_frames":%s,"mcu_ddr_raw_hex":"%s","mcu_ddr_effective_mhz":%s,"chip_temp_c":%s,"shares_per_min":%s}' \
+		"${accepted:-0}" "${rejected:-0}" "${duplicates:-0}" "$(json_escape "$ddr_raw")" "${ddr_mhz:-0}" "${temp:-0}" "${shares:-0}"
+	printf ',"system":{"uptime_seconds":%s,"last_applied_artifact":"%s","host_marker":"%s","image_marker":"%s"}}\n' \
+		"${uptime_s:-0}" "$(json_escape "$(jsonfilter -s "$state_json" -e '@.last_artifact' 2>/dev/null || true)")" "$(json_escape "$host_marker")" "$(json_escape "$image_marker")"
+}
+
+save_pool() {
+	local body="$1" coin url user pw restart
+	coin="$(param_get coin "$body")"; url="$(param_get url "$body")"; user="$(param_get user "$body")"; pw="$(param_get password "$body")"; restart="$(param_get restart "$body")"
+	[ -n "$coin" ] || coin=grin
+	[ "$coin" = "grin" ] || fail "only grin is supported"
+	case "$url" in stratum+tcp://*|stratum://*|tcp://*) ;; *) fail "pool URL must start with stratum+tcp://, stratum://, or tcp://" ;; esac
+	[ -n "$user" ] || fail "wallet/user is required"
+	[ -n "$pw" ] || pw=x
+	/usr/bin/g1m-config set pool_coin "$coin" || fail "failed to write coin"
+	/usr/bin/g1m-config set grin_pool_url "$url" || fail "failed to write pool URL"
+	/usr/bin/g1m-config set grin_pool_user "$user" || fail "failed to write wallet/user"
+	/usr/bin/g1m-config set grin_pool_password "$pw" || fail "failed to write pool password"
+	[ "$restart" = "1" ] && { /etc/init.d/custom-miner restart >/tmp/g1-admin-restart.log 2>&1 & ok "pool saved; miner restart queued"; }
+	ok "pool saved"
+}
+
+save_fan() {
+	local body="$1" target_c auto min_percent max_percent hard_c restart
+	target_c="$(param_get fan_target_c "$body")"; auto="$(param_get fan_auto "$body")"; min_percent="$(param_get fan_min_percent "$body")"; max_percent="$(param_get fan_max_percent "$body")"; hard_c="$(param_get fan_hard_c "$body")"; restart="$(param_get restart "$body")"
+	case "$target_c" in ''|*[!0-9]*) fail "fan target must be a whole number" ;; esac
+	case "$min_percent" in ''|*[!0-9]*) fail "fan min percent must be a whole number" ;; esac
+	case "$max_percent" in ''|*[!0-9]*) fail "fan max percent must be a whole number" ;; esac
+	case "$hard_c" in ''|*[!0-9]*) fail "fan hard temp must be a whole number" ;; esac
+	case "$auto" in 0|1) ;; *) fail "fan auto must be 0 or 1" ;; esac
+	[ "$target_c" -ge 40 ] && [ "$target_c" -le 75 ] || fail "fan target must be between 40C and 75C"
+	[ "$min_percent" -ge 30 ] && [ "$min_percent" -le 100 ] || fail "fan min must be between 30 and 100"
+	[ "$max_percent" -ge "$min_percent" ] && [ "$max_percent" -le 100 ] || fail "fan max must be between min and 100"
+	[ "$hard_c" -ge "$target_c" ] && [ "$hard_c" -le 90 ] || fail "fan hard temp must be >= target and <= 90C"
+	/usr/bin/g1m-config set fan_auto "$auto" || fail "failed to write fan auto"
+	/usr/bin/g1m-config set fan_target_c "$target_c" || fail "failed to write fan target"
+	/usr/bin/g1m-config set fan_min_percent "$min_percent" || fail "failed to write fan min"
+	/usr/bin/g1m-config set fan_max_percent "$max_percent" || fail "failed to write fan max"
+	/usr/bin/g1m-config set fan_hard_c "$hard_c" || fail "failed to write fan hard temp"
+	[ "$restart" = "1" ] && { /etc/init.d/custom-miner restart >/tmp/g1-admin-fan.log 2>&1 & ok "fan settings saved; miner restart queued"; }
+	ok "fan settings saved for next restart"
+}
+
+save_network() {
+	local body="$1" mode ipaddr netmask gateway dns restart
+	mode="$(param_get network_mode "$body")"; ipaddr="$(param_get network_ipaddr "$body")"; netmask="$(param_get network_netmask "$body")"; gateway="$(param_get network_gateway "$body")"; dns="$(param_get network_dns "$body")"; restart="$(param_get restart "$body")"
+	case "$mode" in dhcp|static) ;; *) fail "network mode must be dhcp or static" ;; esac
+	if [ "$mode" = "static" ]; then
+		valid_ipv4 "$ipaddr" || fail "invalid static IP"
+		valid_ipv4 "$netmask" || fail "invalid netmask"
+		valid_ipv4 "$gateway" || fail "invalid gateway"
+		valid_ipv4 "$dns" || fail "invalid dns"
+	fi
+	/usr/bin/g1m-config set network_mode "$mode" || fail "failed to save network mode"
+	if [ "$mode" = "static" ]; then
+		/usr/bin/g1m-config set network_ipaddr "$ipaddr" || fail "failed to save static IP"
+		/usr/bin/g1m-config set network_netmask "$netmask" || fail "failed to save netmask"
+		/usr/bin/g1m-config set network_gateway "$gateway" || fail "failed to save gateway"
+		/usr/bin/g1m-config set network_dns "$dns" || fail "failed to save dns"
+		uci -q batch <<EOF >/dev/null || fail "failed to write network config"
+set network.lan.proto='static'
+set network.lan.ipaddr='$ipaddr'
+set network.lan.netmask='$netmask'
+set network.lan.gateway='$gateway'
+set network.lan.dns='$dns'
+commit network
+EOF
+	else
+		uci -q batch <<'EOF' >/dev/null || fail "failed to write network config"
+set network.lan.proto='dhcp'
+delete network.lan.ipaddr
+delete network.lan.netmask
+delete network.lan.gateway
+delete network.lan.dns
+commit network
+EOF
+	fi
+	[ "$restart" = "1" ] && { (/etc/init.d/network restart >/tmp/g1-admin-network.log 2>&1) & ok "network settings saved; network restart queued"; }
+	ok "network settings saved"
+}
+
+save_telemetry() {
+	local body="$1" enabled required delay interval debug_enabled debug_source
+	enabled="$(param_get telemetry_enabled "$body")"; required="$(param_get telemetry_required "$body")"; delay="$(param_get telemetry_start_delay_seconds "$body")"; interval="$(param_get telemetry_interval_seconds "$body")"
+	debug_enabled="$(param_get debug_uart_readback_enabled "$body")"; debug_source="$(param_get debug_uart_readback_source "$body")"
+	case "$enabled" in 0|1) ;; *) fail "telemetry enabled must be 0 or 1" ;; esac
+	case "$required" in 0|1) ;; *) fail "telemetry required must be 0 or 1" ;; esac
+	case "$delay" in ''|*[!0-9]*) fail "telemetry start delay must be a whole number" ;; esac
+	case "$interval" in ''|*[!0-9]*) fail "telemetry interval must be a whole number" ;; esac
+	case "${debug_enabled:-0}" in 0|1) ;; *) fail "debug readback enabled must be 0 or 1" ;; esac
+	case "${debug_source:-stock}" in stock|debug-uart) ;; *) fail "debug readback source must be stock or debug-uart" ;; esac
+	[ "$delay" -ge 0 ] && [ "$delay" -le 900 ] || fail "telemetry start delay must be 0-900 seconds"
+	[ "$interval" -ge 5 ] && [ "$interval" -le 300 ] || fail "telemetry interval must be 5-300 seconds"
+	/usr/bin/g1m-config set rail_telemetry_enabled "$enabled" || fail "failed to save telemetry enabled"
+	/usr/bin/g1m-config set rail_telemetry_required "$required" || fail "failed to save telemetry required"
+	/usr/bin/g1m-config set rail_telemetry_start_delay_seconds "$delay" || fail "failed to save telemetry delay"
+	/usr/bin/g1m-config set rail_telemetry_interval_seconds "$interval" || fail "failed to save telemetry interval"
+	/usr/bin/g1m-config set debug_uart_readback_enabled "${debug_enabled:-0}" || fail "failed to save debug readback enabled"
+	/usr/bin/g1m-config set debug_uart_readback_source "${debug_source:-stock}" || fail "failed to save debug readback source"
+	ok "telemetry settings saved for next restart"
+}
+
+control_miner() {
+	local body="$1" op
+	op="$(param_get op "$body")"
+	case "$op" in
+		start) /etc/init.d/custom-miner start >/tmp/g1-admin-control.log 2>&1 & ok "miner start queued" ;;
+		stop) /etc/init.d/custom-miner stop >/tmp/g1-admin-control.log 2>&1 & ok "miner stop queued" ;;
+		restart) /etc/init.d/custom-miner restart >/tmp/g1-admin-control.log 2>&1 & ok "miner restart queued" ;;
+		reboot) (sleep 1; reboot) >/tmp/g1-admin-control.log 2>&1 & ok "reboot queued" ;;
+		*) fail "unsupported control operation" ;;
+	esac
+}
+
+apply_profile() {
+	local body="$1" id restart
+	id="$(param_get profile_id "$body")"; restart="$(param_get restart "$body")"
+	eval "$(profile_record "$id")" || fail "unknown profile"
+	[ -f "$firmware" ] || fail "profile firmware not installed on device"
+	/usr/bin/g1m-apply-profile apply-builtin "$id" || fail "failed to apply profile"
+	[ "$restart" = "1" ] && { /etc/init.d/custom-miner restart >/tmp/g1-admin-profile.log 2>&1 & ok "profile applied; miner restart queued"; }
+	ok "profile applied"
+}
+
+recover_profile() {
+	local body="$1" mode restart
+	mode="$(param_get mode "$body")"; restart="$(param_get restart "$body")"
+	[ "$mode" = "safe" ] || fail "unsupported recovery mode"
+	/usr/bin/g1m-apply-profile recover-safe "manual-safe-recovery" || fail "safe recovery failed"
+	[ "$restart" = "1" ] && { /etc/init.d/custom-miner restart >/tmp/g1-admin-recover.log 2>&1 & ok "recovery profile applied; miner restart queued"; }
+	ok "recovery profile applied"
+}
+
+upload_artifact() {
+	local query="$1" filename kind len tmp target
+	filename="$(param_get filename "$query")"; kind="$(param_get kind "$query")"
+	filename="$(safe_filename "$filename")"
+	[ -n "$filename" ] || fail "filename is required"
+	case "$kind" in firmware|manifest) ;; *) fail "unsupported upload kind" ;; esac
+	case "$kind:$filename" in firmware:*.bin|manifest:*.json) ;; firmware:*) fail "firmware must use .bin extension" ;; manifest:*) fail "manifest must use .json extension" ;; esac
+	len="${CONTENT_LENGTH:-0}"
+	case "$len" in ''|*[!0-9]*) fail "invalid content length" ;; esac
+	[ "$len" -gt 0 ] || fail "empty upload"
+	[ "$len" -le 1048576 ] || fail "upload too large"
+	mkdir -p "$UPLOAD_DIR" || fail "failed to create upload directory"
+	tmp="$UPLOAD_DIR/.upload.$$.$filename"; target="$UPLOAD_DIR/$filename"
+	if ! dd of="$tmp" bs=4096 count=$(( (len + 4095) / 4096 )) 2>/dev/null; then rm -f "$tmp"; fail "upload write failed"; fi
+	mv "$tmp" "$target" || fail "failed to finalize upload"
+	if [ "$kind" = "manifest" ] && ! /usr/bin/g1m-policy validate_manifest "$target" >/dev/null 2>&1; then rm -f "$target"; fail "manifest failed validation"; fi
+	emit_json '{"ok":true,"message":"uploaded '"$(json_escape "$filename")"'","path":"'"$(json_escape "$target")"'","kind":"'"$(json_escape "$kind")"'","size":'"$len"'}' ""
+	exit 0
+}
+
+apply_uploaded() {
+	local body="$1" filename restart source manifest
+	filename="$(safe_filename "$(param_get filename "$body")")"; restart="$(param_get restart "$body")"
+	[ -n "$filename" ] || fail "uploaded firmware filename is required"
+	source="$UPLOAD_DIR/$filename"; manifest="$UPLOAD_DIR/${filename%.bin}.json"
+	[ -f "$source" ] || fail "uploaded firmware not found"
+	[ -f "$manifest" ] || fail "matching manifest is required before apply"
+	/usr/bin/g1m-policy validate_manifest "$manifest" >/dev/null 2>&1 || fail "matching manifest failed validation"
+	/usr/bin/g1m-apply-profile apply-uploaded "$source" "$manifest" || fail "failed to apply uploaded firmware"
+	[ "$restart" = "1" ] && { /etc/init.d/custom-miner restart >/tmp/g1-admin-uploaded.log 2>&1 & ok "uploaded firmware applied; miner restart queued"; }
+	ok "uploaded firmware applied"
+}
+
+generate_firmware() {
+	local body="$1" ddr_mhz vddr_mv vcore_mv apply restart result bin_path manifest_path state profile
+	ddr_mhz="$(param_get ddr_mhz "$body")"; vddr_mv="$(param_get vddr_mv "$body")"; vcore_mv="$(param_get vcore_mv "$body")"; apply="$(param_get apply "$body")"; restart="$(param_get restart "$body")"
+	[ -f "$BASE_FIRMWARE" ] || fail "base firmware template is missing"
+	/usr/bin/g1m-policy validate_custom_oc_values "$ddr_mhz" "$vddr_mv" "$vcore_mv" >/dev/null 2>&1 || fail "custom values are out of range"
+	result="$(/usr/bin/g1m-generate-firmware "$ddr_mhz" "$vddr_mv" "$vcore_mv" 2>/tmp/g1-generate-firmware.log)" || fail "firmware generation failed"
+	bin_path="${result%%|*}"; result="${result#*|}"; manifest_path="${result%%|*}"; result="${result#*|}"; state="${result%%|*}"; profile="${result#*|}"
+	[ -f "$bin_path" ] || fail "generated firmware file is missing"
+	[ -f "$manifest_path" ] || fail "generated manifest is missing"
+	/usr/bin/g1m-policy validate_manifest "$manifest_path" >/dev/null 2>&1 || fail "generated manifest failed validation"
+	if [ "$apply" = "1" ]; then
+		/usr/bin/g1m-apply-profile apply-uploaded "$bin_path" "$manifest_path" || fail "generated firmware apply failed"
+		if [ "$restart" = "1" ]; then
+			/etc/init.d/custom-miner restart >/tmp/g1-admin-generated.log 2>&1 &
+			emit_json '{"ok":true,"message":"'"$(json_escape "$state")"' '"$(json_escape "$(basename "$bin_path")")"'; miner restart queued","filename":"'"$(json_escape "$(basename "$bin_path")")"'","profile":"'"$(json_escape "$profile")"'"}' ""
+			exit 0
+		fi
+		emit_json '{"ok":true,"message":"'"$(json_escape "$state")"' '"$(json_escape "$(basename "$bin_path")")"'; applied","filename":"'"$(json_escape "$(basename "$bin_path")")"'","profile":"'"$(json_escape "$profile")"'"}' ""
+		exit 0
+	fi
+	emit_json '{"ok":true,"message":"'"$(json_escape "$state")"' '"$(json_escape "$(basename "$bin_path")")"'","filename":"'"$(json_escape "$(basename "$bin_path")")"'","profile":"'"$(json_escape "$profile")"'"}' ""
+	exit 0
+}
+
+download_support() {
+	local archive
+	archive="$(/usr/bin/g1m-support-bundle 2>/dev/null || true)"
+	[ -f "$archive" ] || fail "failed to build support bundle"
+	echo "Content-Type: application/gzip"
+	echo "Content-Disposition: attachment; filename=\"$(basename "$archive")\""
+	echo "Cache-Control: no-store"
+	echo
+	cat "$archive"
+	exit 0
+}
+
+case "$REQUEST_METHOD" in
+	GET)
+		action="$(param_get action "$QUERY_STRING")"
+		case "$action" in
+			logout) logout ;;
+			download_support) require_session; download_support ;;
+		esac
+		require_session
+		emit_json "$(status_json)" ""
+		;;
+	POST)
+		action="$(param_get action "$QUERY_STRING")"
+		case "$action" in
+			upload_artifact) require_session; upload_artifact "$QUERY_STRING" ;;
+		esac
+		body="$(read_body)"
+		[ -n "$action" ] || action="$(param_get action "$body")"
+		case "$action" in
+			login) login "$body" ;;
+			save_pool|save_fan|save_network|save_telemetry|change_password|control|apply_profile|recover|apply_uploaded|generate_firmware|upload_artifact)
+				require_session
+				;;
+		esac
+		case "$action" in
+			save_pool) save_pool "$body" ;;
+			save_fan) save_fan "$body" ;;
+			save_network) save_network "$body" ;;
+			save_telemetry) save_telemetry "$body" ;;
+			change_password) change_password "$body" ;;
+			control) control_miner "$body" ;;
+			apply_profile) apply_profile "$body" ;;
+			recover) recover_profile "$body" ;;
+			apply_uploaded) apply_uploaded "$body" ;;
+			generate_firmware) generate_firmware "$body" ;;
+			*) fail "unknown action" ;;
+		esac
+		;;
+	*)
+		fail "unsupported method"
+		;;
+esac

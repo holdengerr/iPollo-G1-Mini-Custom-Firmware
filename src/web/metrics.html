@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>G1 Mini Metrics</title>
+<style>
+:root{
+  color-scheme:dark;
+  --bg:#09111a;--bg-2:#0d1722;--panel:rgba(15,24,36,.88);--panel-2:rgba(20,31,46,.82);
+  --line:rgba(118,152,187,.18);--line-strong:rgba(118,152,187,.32);
+  --text:#ecf4ff;--muted:#8ea0b6;--accent:#56c7ff;--accent-soft:rgba(86,199,255,.15);
+  --good:#5ddb8c;--warn:#ffc75a;--bad:#ff6f7d;--chart-a:#64a8ff;--chart-b:#73f0b0;--chart-c:#ffb65f;--chart-d:#ff7181;
+}
+body[data-theme="light"]{
+  color-scheme:light;
+  --bg:#eef6ff;--bg-2:#dff0ff;--panel:rgba(255,255,255,.82);--panel-2:rgba(248,252,255,.92);
+  --line:rgba(28,65,104,.12);--line-strong:rgba(28,65,104,.22);
+  --text:#102032;--muted:#5d7188;--accent:#138de5;--accent-soft:rgba(19,141,229,.12);
+  --good:#0c9b52;--warn:#b88300;--bad:#c34251;--chart-a:#1e7de0;--chart-b:#18b874;--chart-c:#db8e19;--chart-d:#d14d63;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Arial,sans-serif;
+  background:radial-gradient(circle at top right, rgba(86,199,255,.12), transparent 20%),linear-gradient(180deg,var(--bg-2),var(--bg));
+}
+.shell{max-width:1760px;margin:0 auto;padding:26px 22px 28px}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;margin-bottom:18px}
+.nav,.btn{display:flex;align-items:center;gap:8px;padding:6px;background:var(--panel);border:1px solid var(--line);border-radius:999px;backdrop-filter:blur(16px)}
+.nav a,.btn{padding:10px 14px;color:var(--muted);text-decoration:none}
+.nav a.active{background:var(--accent-soft);border-radius:999px;color:var(--text);font-weight:700}
+.btn{cursor:pointer;color:var(--text)}
+.hero,.panel{background:var(--panel);border:1px solid var(--line);border-radius:24px;backdrop-filter:blur(18px)}
+.hero{padding:22px;margin-bottom:14px}
+.hero h1{margin:0;font-size:28px}.hero .sub{margin-top:6px;color:var(--muted)}
+.rangebar{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.range{appearance:none;border:1px solid var(--line);background:var(--panel-2);color:var(--muted);border-radius:999px;padding:8px 12px;cursor:pointer}
+.range.active{background:var(--accent-soft);border-color:var(--line-strong);color:var(--text)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.panel{padding:18px}
+.panel h2{margin:0 0 12px;font-size:16px}
+canvas{display:block;width:100%;height:360px;background:rgba(255,255,255,.02);border:1px solid var(--line);border-radius:18px}
+.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;color:var(--muted);font-size:12px}
+.chip{display:inline-flex;align-items:center;gap:6px}
+.legend-toggle{appearance:none;border:1px solid var(--line);background:var(--panel-2);color:var(--muted);border-radius:999px;padding:7px 10px;cursor:pointer;font:inherit}
+.legend-toggle.active{color:var(--text);border-color:var(--line-strong);background:var(--accent-soft)}
+.legend-toggle.off{opacity:.45}
+.sw{width:10px;height:10px;border-radius:50%}
+@media(max-width:980px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body data-theme="dark">
+<main class="shell">
+  <header class="topbar">
+    <nav class="nav">
+      <a href="/">Overview</a>
+      <a class="active" href="/metrics.html">Metrics</a>
+      <a href="/admin.html">Admin</a>
+    </nav>
+    <button class="btn" id="themeToggle" type="button">Light Mode</button>
+  </header>
+
+  <section class="hero">
+    <h1>Stored Metrics</h1>
+    <div class="rangebar">
+      <button class="range active" data-range="900" type="button">15m</button>
+      <button class="range" data-range="1800" type="button">30m</button>
+      <button class="range" data-range="3600" type="button">1h</button>
+      <button class="range" data-range="21600" type="button">6h</button>
+      <button class="range" data-range="86400" type="button">24h</button>
+      <button class="range" data-range="172800" type="button">48h</button>
+    </div>
+  </section>
+
+  <section class="grid">
+    <div class="panel">
+      <h2>Hashrate vs Share Flow</h2>
+      <canvas id="chartA" width="1200" height="600"></canvas>
+      <div class="legend" id="chartALegend"></div>
+    </div>
+    <div class="panel">
+      <h2>Accepted / Rejected / Duplicates</h2>
+      <canvas id="chartB" width="1200" height="600"></canvas>
+      <div class="legend" id="chartBLegend"></div>
+    </div>
+    <div class="panel">
+      <h2>Temperature Trend</h2>
+      <canvas id="chartC" width="1200" height="600"></canvas>
+      <div class="legend" id="chartCLegend"></div>
+    </div>
+    <div class="panel">
+      <h2>Seconds Since Last Accept</h2>
+      <canvas id="chartD" width="1200" height="600"></canvas>
+      <div class="legend" id="chartDLegend"></div>
+    </div>
+  </section>
+</main>
+<script>
+const themeKey="g1m-theme",historyCacheKey="g1m-history-cache-v1";
+let selectedRange=900,hist=[];
+const charts=["chartA","chartB","chartC","chartD"];
+const $=id=>document.getElementById(id);
+const bust=url=>url+(url.includes("?")?"&":"?")+"_="+Date.now();
+const metricSeriesKey="g1m-metrics-series-v1";
+const seriesState={chartA:{h:true,s:true,s5:true,s1:true},chartB:{a:true,r:true,d:true},chartC:{temp:true},chartD:{sla:true}};
+function num(v,d=0){v=Number(v);return Number.isFinite(v)?v:d}
+function isoEpoch(v){const ms=Date.parse(v||"");return Number.isFinite(ms)?(ms/1000):0}
+function sumObj(o){let n=0;if(o&&typeof o==="object")for(const k in o)n+=num(o[k]);return n}
+function pickHashrate(s){return num(s.cgminer_estats_hashrate)||num(s.cgminer_hashrate)||num(s.hashrate)||num(s.hashrate_gps_avg)||0}
+function pickSpm(s){return num(s.shares_per_min)||num(s.accepted_per_min_avg)||num(s.accepted_per_min)||0}
+function sampleEpoch(s){const vals=[num(s.last_status_frame_epoch,0),num(s.last_result_epoch,0),isoEpoch(s.updated_at||""),isoEpoch(s.last_status_frame_time||""),isoEpoch(s.last_result_time||""),isoEpoch(s.sensor_updated_at||""),isoEpoch(s.last_valid_job_time||""),isoEpoch(s.last_share_time||""),isoEpoch(s.fan_rpm_updated_at||""),num(s.time,0)].filter(v=>v>0);return vals.length?Math.max(...vals):Math.floor(Date.now()/1000)}
+function lastAcceptEpoch(s){const direct=num(s.last_accept_epoch);if(direct>0)return direct;const iso=isoEpoch(s.last_accept_time||"");if(iso>0)return iso;const since=num(s.seconds_since_last_accept,-1);if(since>=0){const base=(num(s.time)>0?num(s.time):Math.floor(Date.now()/1000));return Math.max(0,Math.floor(base-since))}return 0}
+function mergeHistory(samples){if(!Array.isArray(samples))return;const map={};for(const p of hist)map[num(p.t)]=p;for(const p of samples){const t=num(p.t);if(t>0&&Number.isFinite(num(p.h))&&Number.isFinite(num(p.s)))map[t]={t:t,h:num(p.h),s:num(p.s),s1:num(p.s1),s5:num(p.s5),a:num(p.a),r:num(p.r),d:num(p.d),temp:num(p.temp),la:num(p.la),sla:num(p.sla)}}hist=Object.values(map).sort((a,b)=>a.t-b.t)}
+function mergeStatusSample(s){const t=sampleEpoch(s);const accepted=num(s.accepted)||sumObj(s.accepted_by_ddr);const rejected=num(s.rejected)||sumObj(s.rejected_by_ddr);const submitErrors=num(s.submit_error)||num(s.submit_errors)||sumObj(s.submit_errors_by_ddr);const dups=num(s.duplicates)||num(s.duplicate_result_frames)||sumObj(s.duplicates_by_ddr);const temp=num(s.fan_control_temp_c)||num(s.temp)||((s.board_temps_c&&s.board_temps_c[0])?num(s.board_temps_c[0]):0);mergeHistory([{t:t,h:pickHashrate(s),s:pickSpm(s),s1:num(s.accepted_per_min_1m),s5:num(s.accepted_per_min_5m),a:accepted,r:rejected+submitErrors,d:dups,temp:temp,la:lastAcceptEpoch(s),sla:num(s.seconds_since_last_accept)}]);saveHistoryCache()}
+function loadTheme(){const t=localStorage.getItem(themeKey)==="light"?"light":"dark";document.body.dataset.theme=t;$("themeToggle").textContent=t==="dark"?"Light Mode":"Dark Mode"}
+function setTheme(){const next=document.body.dataset.theme==="dark"?"light":"dark";localStorage.setItem(themeKey,next);loadTheme();drawAll()}
+function loadSeriesState(){try{const raw=localStorage.getItem(metricSeriesKey);if(!raw)return;const parsed=JSON.parse(raw)||{};for(const chartId of Object.keys(seriesState)){for(const key of Object.keys(seriesState[chartId])){if(typeof parsed?.[chartId]?.[key]==="boolean")seriesState[chartId][key]=parsed[chartId][key]}}}catch(e){}}
+function saveSeriesState(){try{localStorage.setItem(metricSeriesKey,JSON.stringify(seriesState))}catch(e){}}
+function niceStep(span,targetTicks=4){if(!(span>0))return 1;const raw=span/Math.max(1,targetTicks),exp=Math.pow(10,Math.floor(Math.log10(raw))),frac=raw/exp;let niceFrac=1;if(frac<=1)niceFrac=1;else if(frac<=2)niceFrac=2;else if(frac<=5)niceFrac=5;else niceFrac=10;return niceFrac*exp}
+function niceAxis(arr,targetTicks=4){if(!arr.length)return{min:0,max:1,step:0.25,ticks:4};let mn=Math.min(...arr),mx=Math.max(...arr);if(mn===mx){const pad=Math.max(Math.abs(mx)*0.05,0.05);mn-=pad;mx+=pad}const step=niceStep(mx-mn,targetTicks),min=Math.floor(mn/step)*step,max=Math.ceil(mx/step)*step,ticks=Math.max(1,Math.round((max-min)/step));return{min,max,step,ticks}}
+function axisDigits(step){const abs=Math.abs(step);if(abs<0.01)return 3;if(abs<0.1)return 3;if(abs<1)return 2;if(abs<10)return 1;return 0}
+function setRange(sec){selectedRange=sec;document.querySelectorAll(".range").forEach(b=>b.classList.toggle("active",num(b.dataset.range)===sec));drawAll()}
+document.querySelectorAll(".range").forEach(b=>b.addEventListener("click",()=>setRange(num(b.dataset.range,3600))));
+$("themeToggle").addEventListener("click",setTheme);
+
+async function loadHistory(){
+  try{
+    const data=await fetchJson("/cgi-bin/custom-miner-history",2500);
+    if(data){
+      mergeHistory(data);
+      saveHistoryCache();
+    }
+  }catch(e){}
+}
+
+async function loadStatusSample(){
+  try{
+    const data=await fetchJson("/cgi-bin/custom-miner-status",4000);
+    if(data)mergeStatusSample(data);
+  }catch(e){}
+}
+
+function parsePossiblyBrokenJson(raw){
+  let text=String(raw==null?"":raw).replace(/^\uFEFF/,"").trim();
+  try{return JSON.parse(text)}catch(e){}
+  const firstBrace=text.search(/[\[{]/);
+  if(firstBrace>=0){
+    const sliced=text.slice(firstBrace).trim();
+    try{return JSON.parse(sliced)}catch(e){}
+  }
+  throw new SyntaxError("Unable to parse JSON payload");
+}
+
+async function fetchJson(url,timeoutMs=4000){
+  const ctrl=new AbortController();
+  const timer=setTimeout(()=>ctrl.abort(),timeoutMs);
+  try{
+    const r=await fetch(bust(url),{cache:"no-store",signal:ctrl.signal});
+    if(!r.ok)throw new Error("http "+r.status);
+    return parsePossiblyBrokenJson(await r.text());
+  }finally{
+    clearTimeout(timer);
+  }
+}
+
+function saveHistoryCache(){try{localStorage.setItem(historyCacheKey,JSON.stringify(hist))}catch(e){}}
+function loadHistoryCache(){try{const raw=localStorage.getItem(historyCacheKey);if(raw)hist=JSON.parse(raw)||[]}catch(e){}}
+function dataNow(){const lastT=Array.isArray(hist)&&hist.length?num(hist[hist.length-1].t):0;return lastT>0?lastT:Math.floor(Date.now()/1000)}
+
+function visibleHistory(){
+  const now=dataNow();
+  const start=now-selectedRange;
+  const visible=Array.isArray(hist)?hist.filter(p=>num(p.t)>=start):[];
+  const points=visible.length?visible:(Array.isArray(hist)&&hist.length?hist.slice(-1):[]);
+  if(points.length){
+    const first=points[0];
+    if(num(first.t)>start){
+      return [{t:start,h:num(first.h),s:num(first.s),s1:num(first.s1),s5:num(first.s5),a:num(first.a),r:num(first.r),d:num(first.d),temp:num(first.temp),sla:num(first.sla)}].concat(points);
+    }
+  }
+  return points;
+}
+
+function renderLegendToggles(){
+  const defs={
+    chartA:[
+      {key:"h",label:"Hashrate",color:"var(--chart-a)"},
+      {key:"s",label:"Shares / min",color:"var(--chart-b)"},
+      {key:"s5",label:"Shares 5m",color:"var(--chart-c)"},
+      {key:"s1",label:"Shares 1m",color:"var(--chart-d)"}
+    ],
+    chartB:[
+      {key:"a",label:"Accepted",color:"var(--chart-b)"},
+      {key:"r",label:"Rejected",color:"var(--chart-d)"},
+      {key:"d",label:"Duplicates",color:"var(--chart-c)"}
+    ],
+    chartC:[{key:"temp",label:"Chip Temp",color:"var(--chart-c)"}],
+    chartD:[{key:"sla",label:"Accept Gap",color:"var(--chart-d)"}]
+  };
+  Object.entries(defs).forEach(([chartId,items])=>{
+    const host=$(chartId+"Legend");
+    if(!host)return;
+    host.innerHTML=items.map(item=>{
+      const on=!!seriesState[chartId][item.key];
+      return `<button class="legend-toggle ${on?"active":"off"}" type="button" data-chart="${chartId}" data-key="${item.key}"><span class="sw" style="background:${item.color}"></span>${item.label}</button>`;
+    }).join("");
+  });
+  document.querySelectorAll(".legend-toggle").forEach(btn=>{
+    btn.onclick=()=>{
+      const chartId=btn.dataset.chart,key=btn.dataset.key;
+      const enabledCount=Object.values(seriesState[chartId]).filter(Boolean).length;
+      if(seriesState[chartId][key] && enabledCount===1)return;
+      seriesState[chartId][key]=!seriesState[chartId][key];
+      saveSeriesState();
+      renderLegendToggles();
+      drawAll();
+    };
+  });
+}
+
+function drawChart(id,series,labels){
+  const c=$(id),rect=c.getBoundingClientRect(),dpr=Math.max(1,window.devicePixelRatio||1);
+  const cssW=Math.max(320,Math.floor(rect.width)),cssH=Math.max(220,Math.floor(rect.height));
+  if(c.width!==Math.floor(cssW*dpr)||c.height!==Math.floor(cssH*dpr)){c.width=Math.floor(cssW*dpr);c.height=Math.floor(cssH*dpr)}
+  const x=c.getContext("2d"),w=cssW,h=cssH,pl=58,pr=18,pt=18,pb=34,gw=w-pl-pr,gh=h-pt-pb;
+  const styles=getComputedStyle(document.body),line=styles.getPropertyValue("--line-strong").trim(),muted=styles.getPropertyValue("--muted").trim();
+  const now=dataNow(),start=now-selectedRange,points=visibleHistory();
+  const activeSeries=series.filter(s=>seriesState[id]?.[s.key]!==false);
+  const vals=activeSeries.flatMap(s=>points.map(p=>num(p[s.key])).filter(Number.isFinite));
+  const axis=niceAxis(vals);
+  x.setTransform(dpr,0,0,dpr,0,0);x.clearRect(0,0,w,h);x.font="12px system-ui,Segoe UI,Arial";x.textBaseline="middle";
+  x.strokeStyle=line;x.fillStyle=muted;
+  for(let i=0;i<=axis.ticks;i++){const y=pt+gh*i/axis.ticks,v=axis.max-(axis.max-axis.min)*i/axis.ticks;x.beginPath();x.moveTo(pl,y);x.lineTo(pl+gw,y);x.stroke();x.fillText(v.toFixed(axisDigits(axis.step)),10,y)}
+  x.textAlign="center";
+  for(let i=0;i<=4;i++){const px=pl+gw*i/4,secAgo=(4-i)*selectedRange/4,label=secAgo<60?("-"+Math.round(secAgo)+"s"):("-"+Math.round(secAgo/60)+"m");x.fillText(i===4?"now":label,px,h-10)}
+  x.textAlign="left";
+  activeSeries.forEach(s=>{
+    x.strokeStyle=styles.getPropertyValue(s.colorVar).trim();x.lineWidth=2;x.beginPath();
+    let started=false;
+    points.forEach(p=>{
+      const px=pl+((num(p.t)-start)/selectedRange)*gw;
+      const py=pt+gh-((num(p[s.key])-axis.min)/(axis.max-axis.min))*gh;
+      if(started)x.lineTo(px,py);else{x.moveTo(px,py);started=true}
+    });
+    if(started)x.stroke();
+  });
+}
+
+function drawAll(){
+  drawChart("chartA",[
+    {key:"h",colorVar:"--chart-a"},
+    {key:"s",colorVar:"--chart-b"},
+    {key:"s5",colorVar:"--chart-c"},
+    {key:"s1",colorVar:"--chart-d"}
+  ]);
+  drawChart("chartB",[
+    {key:"a",colorVar:"--chart-b"},
+    {key:"r",colorVar:"--chart-d"},
+    {key:"d",colorVar:"--chart-c"}
+  ]);
+  drawChart("chartC",[
+    {key:"temp",colorVar:"--chart-c"}
+  ]);
+  drawChart("chartD",[
+    {key:"sla",colorVar:"--chart-d"}
+  ]);
+}
+
+loadTheme();
+loadSeriesState();
+renderLegendToggles();
+loadHistoryCache();
+Promise.allSettled([loadHistory(),loadStatusSample()]).then(drawAll);
+setInterval(()=>Promise.allSettled([loadHistory(),loadStatusSample()]).then(drawAll),10000);
+window.addEventListener("resize",drawAll);
+window.addEventListener("storage",e=>{if(e.key===historyCacheKey&&e.newValue){loadHistoryCache();drawAll();}});
+window.addEventListener("focus",()=>{Promise.allSettled([loadHistory(),loadStatusSample()]).then(drawAll)});
+window.addEventListener("pageshow",()=>{Promise.allSettled([loadHistory(),loadStatusSample()]).then(drawAll)});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)Promise.allSettled([loadHistory(),loadStatusSample()]).then(drawAll)});
+</script>
+</body>
+</html>

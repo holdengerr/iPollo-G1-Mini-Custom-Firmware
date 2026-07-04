@@ -1,0 +1,14 @@
+dist/
+inputs/*
+!inputs/README.md
+*.img
+*.img.gz
+*.squashfs
+*.bin
+*.json
+*.log
+*.tmp
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

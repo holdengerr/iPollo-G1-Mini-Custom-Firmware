@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+<title>G1 Mini Admin</title>
+<style>
+:root{color-scheme:dark;--bg:#0d1014;--panel:#151a20;--panel2:#10151b;--line:#2a333d;--text:#e8eef5;--muted:#91a0ad;--good:#4fd083;--warn:#f0bd4e;--bad:#ef6b6b;--blue:#68a8ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,-apple-system,Segoe UI,Arial,sans-serif}
+header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid var(--line);background:#11161c}
+h1{font-size:20px;margin:0;font-weight:650}.sub{color:var(--muted);font-size:12px}a{color:#a7c8ff;text-decoration:none}a:hover{text-decoration:underline}
+.wrap{width:100%;max-width:1440px;margin:0 auto;padding:18px}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}.wide{grid-column:1/-1}
+.panel h2{font-size:15px;margin:0 0 12px;color:#d6e1ea;font-weight:650}.row{display:grid;grid-template-columns:180px minmax(0,1fr);gap:12px;align-items:center;margin:10px 0}.row label{color:var(--muted)}
+input:not([type="radio"]):not([type="checkbox"]),select{width:100%;background:#10151b;color:var(--text);border:1px solid #2a333d;border-radius:6px;padding:9px 10px;font:14px system-ui,Segoe UI,Arial}input:focus,select:focus{outline:1px solid var(--blue);border-color:var(--blue)}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}button{appearance:none;border:1px solid #344250;background:#17202a;color:var(--text);border-radius:6px;padding:9px 12px;font:14px system-ui,Segoe UI,Arial;cursor:pointer}button.primary{border-color:#4078c8;background:#173154}button.danger{border-color:#713434;background:#301a1a;color:#ffdede}
+.status{min-height:22px;margin-top:10px;color:var(--muted)}.ok{color:var(--good)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.kv{display:grid;gap:8px}.kv div{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid #202831;padding:8px 0}.kv span:first-child{color:var(--muted)}
+.profile-card{display:flex;gap:10px;align-items:flex-start;border:1px solid #27313b;background:var(--panel2);border-radius:6px;padding:10px;margin:8px 0}.profile-card input[type="radio"]{width:auto;flex:0 0 auto;margin:4px 0 0}.profile-card b{display:block;margin-bottom:4px}.profile-card .sub{display:block;margin-top:4px}.note{color:var(--muted);font-size:12px;margin-top:8px}
+.mini-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.stack{display:grid;gap:8px}.toggle{display:flex;align-items:center;gap:8px;color:var(--muted);margin-bottom:8px}
+@media(max-width:920px){.grid,.mini-grid{grid-template-columns:1fr}.row{grid-template-columns:1fr;gap:4px}}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>G1 Mini Admin</h1><div class="sub">pool, profiles, recovery, network, and service controls</div></div>
+  <div class="sub"><a href="/">Dashboard</a> | <a href="#" id="logoutLink">Logout</a></div>
+</header>
+<main class="wrap">
+  <section class="grid">
+    <div class="panel">
+      <h2>Pool</h2>
+      <div class="row"><label for="coin">Coin</label><select id="coin"><option value="grin">grin</option></select></div>
+      <div class="row"><label for="url">Pool URL</label><input id="url" autocomplete="off" spellcheck="false"></div>
+      <div class="row"><label for="user">Wallet / User</label><input id="user" autocomplete="off" spellcheck="false"></div>
+      <div class="row"><label for="password">Password</label><input id="password" autocomplete="off" spellcheck="false" placeholder="x"></div>
+      <div class="actions">
+        <button class="primary" id="savePool">Save Pool</button>
+        <button id="savePoolRestart">Save + Restart Miner</button>
+      </div>
+      <div class="status" id="poolStatus"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Cooling</h2>
+      <div class="row"><label for="fanTarget">Target Temp</label><input id="fanTarget" type="number" min="40" max="75" step="1"></div>
+      <div class="row"><label for="fanHard">Hard Temp</label><input id="fanHard" type="number" min="45" max="90" step="1"></div>
+      <div class="row"><label for="fanMin">Min Fan %</label><input id="fanMin" type="number" min="30" max="100" step="1"></div>
+      <div class="row"><label for="fanMax">Max Fan %</label><input id="fanMax" type="number" min="30" max="100" step="1"></div>
+      <div class="actions">
+        <button class="primary" id="saveFan">Save Fan Settings</button>
+        <button id="saveFanRestart">Save + Restart Miner</button>
+      </div>
+      <div class="status" id="fanStatus"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Network</h2>
+      <div class="row"><label for="networkMode">Mode</label><select id="networkMode"><option value="dhcp">dhcp</option><option value="static">static</option></select></div>
+      <div id="staticNetworkFields">
+        <div class="row"><label for="networkIpaddr">Static IP</label><input id="networkIpaddr" autocomplete="off" spellcheck="false"></div>
+        <div class="row"><label for="networkNetmask">Netmask</label><input id="networkNetmask" autocomplete="off" spellcheck="false"></div>
+        <div class="row"><label for="networkGateway">Gateway</label><input id="networkGateway" autocomplete="off" spellcheck="false"></div>
+        <div class="row"><label for="networkDns">DNS</label><input id="networkDns" autocomplete="off" spellcheck="false"></div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="saveNetwork">Save Network</button>
+        <button id="saveNetworkRestart">Save + Restart Network</button>
+      </div>
+      <div class="note">Default release behavior is DHCP so the miner comes up cleanly on an unknown LAN.</div>
+      <div class="status" id="networkStatus"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Telemetry</h2>
+      <div class="row"><label for="telemetryEnabled">Enable Rail Telemetry</label><select id="telemetryEnabled"><option value="1">enabled</option><option value="0">disabled</option></select></div>
+      <div class="row"><label for="telemetryRequired">Require Telemetry for Health Guard</label><select id="telemetryRequired"><option value="0">no</option><option value="1">yes</option></select></div>
+      <div class="row"><label for="telemetryDelay">Start Delay Sec</label><input id="telemetryDelay" type="number" min="0" max="900" step="5"></div>
+      <div class="row"><label for="telemetryInterval">Poll Interval Sec</label><input id="telemetryInterval" type="number" min="5" max="300" step="5"></div>
+      <div class="row"><label for="debugReadbackEnabled">Enable Debug UART Readback</label><select id="debugReadbackEnabled"><option value="0">disabled</option><option value="1">enabled</option></select></div>
+      <div class="row"><label for="debugReadbackSource">Dashboard Readout Source</label><select id="debugReadbackSource"><option value="stock">original method</option><option value="debug-uart">debug UART mod</option></select></div>
+      <div class="actions">
+        <button class="primary" id="saveTelemetry">Save Telemetry Settings</button>
+      </div>
+      <div class="note">Rail telemetry stays optional. Debug UART readback is also optional and defaults to the original method so unmodified miners do not depend on this path.</div>
+      <div class="status" id="telemetryStatus"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Login Password</h2>
+      <div class="row"><label for="currentPassword">Current Password</label><input id="currentPassword" type="password" value="" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+      <div class="row"><label for="newPassword">New Password</label><input id="newPassword" type="password" value="" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+      <div class="row"><label for="confirmPassword">Confirm Password</label><input id="confirmPassword" type="password" value="" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+      <div class="actions">
+        <button class="primary" id="changePassword">Change Login Password</button>
+      </div>
+      <div class="note">This changes the web admin login password. Default remains <code>admin</code> until you change it.</div>
+      <div class="status" id="passwordStatus"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Service</h2>
+      <div class="kv">
+        <div><span>Miner</span><b id="minerState">--</b></div>
+        <div><span>Accepted</span><b id="accepted">--</b></div>
+        <div><span>Duplicates</span><b id="duplicates">--</b></div>
+        <div><span>Rejected</span><b id="rejected">--</b></div>
+        <div><span>DDR</span><b id="ddr">--</b></div>
+        <div><span>Vddr readback</span><b id="vddr">--</b></div>
+        <div><span>Vcore readback</span><b id="vcore">--</b></div>
+        <div><span>Core resets</span><b id="coreResets">--</b></div>
+        <div><span>Readback source</span><b id="readbackSource">--</b></div>
+        <div><span>Input power</span><b id="power">--</b></div>
+      </div>
+      <div class="actions">
+        <button id="startMiner">Start</button>
+        <button id="stopMiner">Stop</button>
+        <button class="primary" id="restartMiner">Restart</button>
+        <button class="danger" id="rebootMiner">Reboot</button>
+      </div>
+      <div class="status" id="serviceStatus"></div>
+    </div>
+
+    <div class="panel wide">
+      <h2>System</h2>
+      <div class="mini-grid">
+        <div class="kv">
+          <div><span>Release</span><b id="releaseVersion">--</b></div>
+          <div><span>Build Date</span><b id="releaseDate">--</b></div>
+          <div><span>Commit</span><b id="releaseCommit">--</b></div>
+          <div><span>Compatibility</span><b id="releaseCompat">--</b></div>
+          <div><span>Telemetry Health</span><b id="telemetryHealth">--</b></div>
+          <div><span>Telemetry Capability</span><b id="telemetryCapability">--</b></div>
+          <div><span>Image Marker</span><b id="imageMarker">--</b></div>
+        </div>
+        <div class="kv">
+          <div><span>Active Profile</span><b id="activeProfile">--</b></div>
+          <div><span>Safe Profile</span><b id="safeProfile">Stable 1872 MHz / Vddr 1300 / Vcore 1080</b></div>
+          <div><span>Boot Attempts</span><b id="bootAttempts">--</b></div>
+          <div><span>Last Recovery</span><b id="lastRecovery">--</b></div>
+          <div><span>Last MCU Artifact</span><b id="lastArtifact">--</b></div>
+          <div><span>Uptime</span><b id="systemUptime">--</b></div>
+          <div><span>Host Marker</span><b id="hostMarker">--</b></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel wide">
+      <h2>Performance Profile</h2>
+      <label class="toggle"><input id="showExperimental" type="checkbox"> show experimental profiles</label>
+      <div id="profiles"></div>
+      <div class="actions">
+        <button class="primary" id="applyProfile">Apply Profile + Restart Miner</button>
+      </div>
+      <div class="status" id="profileStatus"></div>
+    </div>
+
+    <div class="panel wide">
+      <h2>Recovery</h2>
+      <div class="actions">
+        <button class="danger" id="recoverSafe">Restore Safe Profile + Restart</button>
+      </div>
+      <div class="note">Recovery always falls back to the bundled safe profile.</div>
+      <div class="status" id="recoveryStatus"></div>
+    </div>
+
+    <div class="panel wide">
+      <h2>Firmware Upload</h2>
+      <div class="mini-grid">
+        <div class="stack">
+          <div class="row"><label for="firmwareFile">Firmware .bin</label><input id="firmwareFile" type="file" accept=".bin,application/octet-stream"></div>
+          <div class="actions"><button class="primary" id="uploadFirmware">Upload Firmware</button></div>
+          <div class="status" id="uploadFirmwareStatus"></div>
+        </div>
+        <div class="stack">
+          <div class="row"><label for="manifestFile">Manifest .json</label><input id="manifestFile" type="file" accept=".json,application/json"></div>
+          <div class="actions"><button id="uploadManifest">Upload Manifest</button></div>
+          <div class="status" id="uploadManifestStatus"></div>
+        </div>
+      </div>
+      <div class="note">Uploaded firmware is inactive until you explicitly apply it.</div>
+    </div>
+
+    <div class="panel wide">
+      <h2>On-Device Firmware Generator</h2>
+      <div class="mini-grid">
+        <div class="stack">
+          <div class="row"><label for="genDdrMhz">DDR MHz</label><input id="genDdrMhz" type="number" step="12"></div>
+          <div class="row"><label for="genVddrMv">Vddr mV</label><input id="genVddrMv" type="number" step="2"></div>
+          <div class="row"><label for="genVcoreMv">Vcore mV</label><input id="genVcoreMv" type="number" step="2"></div>
+        </div>
+        <div class="stack">
+          <div class="note" id="generatorBounds">DDR -- to -- MHz, Vddr -- to -- mV, Vcore -- to -- mV.</div>
+          <div class="note">Generation reuses a matching artifact if it already exists, otherwise it patches the bundled base firmware and writes a matching manifest automatically.</div>
+        </div>
+      </div>
+      <div class="actions">
+        <button id="generateFirmware">Generate Only</button>
+        <button class="primary" id="generateApplyFirmware">Generate + Apply + Restart Miner</button>
+      </div>
+      <div class="status" id="generateStatus"></div>
+    </div>
+
+    <div class="panel wide">
+      <h2>Uploaded Firmware</h2>
+      <div id="uploadedFirmware"></div>
+      <div class="actions">
+        <button class="primary" id="applyUploaded">Apply Uploaded Firmware + Restart Miner</button>
+      </div>
+      <div class="status" id="uploadedStatus"></div>
+    </div>
+
+    <div class="panel wide">
+      <h2>Support Bundle</h2>
+      <div class="actions">
+        <button id="downloadSupport">Download Support Bundle</button>
+      </div>
+      <div class="note">Includes logs, current config, profile metadata, state, rail telemetry, current stats, and up to 48h of miner history if present.</div>
+      <div class="status" id="supportStatus"></div>
+    </div>
+  </section>
+</main>
+<script>
+const api="/cgi-bin/g1-admin",$=id=>document.getElementById(id),historyCacheKey="g1m-history-cache-v1";let state=null;
+const bust=url=>url+(url.includes("?")?"&":"?")+"_="+Date.now();
+function redirectLogin(){window.location.href="/login.html?next="+encodeURIComponent("/admin.html")}
+function parsePossiblyBrokenJson(raw){
+  let text=String(raw==null?"":raw).replace(/^\uFEFF/,"").trim();
+  try{return JSON.parse(text)}catch(e){}
+  const firstBrace=text.search(/[\[{]/);
+  if(firstBrace>=0){
+    const sliced=text.slice(firstBrace).trim();
+    try{return JSON.parse(sliced)}catch(e){}
+  }
+  throw new SyntaxError("Unable to parse JSON payload");
+}
+async function apiJson(url,opts){const r=await fetch(bust(url),Object.assign({credentials:"same-origin",cache:"no-store"},opts||{}));const raw=await r.text().catch(()=>"");const j=(()=>{try{return parsePossiblyBrokenJson(raw)}catch(e){return {ok:false,error:"invalid response"}}})();if(j&&j.auth_required)redirectLogin();return j}
+function post(action,data){const body=new URLSearchParams(Object.assign({action},data||{}));return apiJson(api,{method:"POST",headers:{"Content-Type":"application/x-www-form-urlencoded"},body})}
+async function uploadRaw(kind,file){const qs=new URLSearchParams({action:"upload_artifact",kind,filename:file.name});return await apiJson(`${api}?${qs.toString()}`,{method:"POST",headers:{"Content-Type":"application/octet-stream"},body:await file.arrayBuffer()})}
+function msg(id,text,cls){const el=$(id);el.textContent=text||"";el.className="status "+(cls||"")}
+function n(v,d=0){v=Number(v);return Number.isFinite(v)?v:d}
+function fmt(v,d=1){v=Number(v);return Number.isFinite(v)?v.toFixed(d):"--"}
+function dur(sec){sec=Math.max(0,Math.floor(n(sec)));let h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60;if(h)return h+"h "+String(m).padStart(2,"0")+"m";if(m)return m+"m "+String(s).padStart(2,"0")+"s";return s+"s"}
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]))}
+function saveHistoryCache(samples){try{if(Array.isArray(samples))localStorage.setItem(historyCacheKey,JSON.stringify(samples))}catch(e){}}
+function currentProfileId(){return state&&state.g1m_state?state.g1m_state.active_profile_id:""}
+function filterProfiles(list){const showExp=$("showExperimental").checked;return (list||[]).filter(p=>showExp||p.class!=="experimental")}
+function renderProfiles(list){const active=currentProfileId();$("profiles").innerHTML=filterProfiles(list).map(p=>`<label class="profile-card"><input type="radio" name="profile" value="${p.id}" ${active===p.id?"checked":""} ${p.available?"":"disabled"}><span><b>${p.label}${active===p.id?" (current)":""}</b><span class="${p.available?"ok":"bad"}">${p.available?"installed":"missing firmware"} | ${p.class}</span><span class="sub">${p.ddr_raw} / ${p.ddr_mhz} MHz, Vddr ${p.vddr_mv} mV, Vcore ${p.vcore_mv} mV</span></span></label>`).join("")}
+function renderUploaded(list){$("uploadedFirmware").innerHTML=(list||[]).length?(list||[]).map((f,i)=>`<label class="profile-card"><input type="radio" name="uploadedFirmware" value="${esc(f.filename)}" ${i===0?"checked":""}><span><b>${esc(f.filename)}</b><span class="${f.manifest_valid?"ok":f.manifest_present?"warn":"bad"}">${f.manifest_valid?"validated manifest":"manifest missing or invalid"}</span><span class="sub">${fmt(f.size,0)} bytes<br><code>${esc(f.path)}</code></span></span></label>`).join(""):'<div class="sub">No uploaded firmware files found.</div>'}
+function renderSystem(s){const rel=s.release||{},st=s.g1m_state||{},tele=s.telemetry||{},sys=s.system||{};$("releaseVersion").textContent=rel.firmware_version||rel.version||"--";$("releaseDate").textContent=rel.build_date_utc||rel.build_date||"--";$("releaseCommit").textContent=rel.git_commit||"--";$("releaseCompat").textContent=rel.compatibility_tag||rel.compatibility||"--";$("telemetryHealth").textContent=tele.health||"--";$("telemetryCapability").textContent=tele.capability||"--";$("imageMarker").textContent=sys.image_marker||"--";$("activeProfile").textContent=st.active_profile_label||st.active_profile_id||"--";$("bootAttempts").textContent=n(st.boot_attempts,0);$("lastRecovery").textContent=st.last_recovery_reason||"--";$("lastArtifact").textContent=sys.last_applied_artifact||"--";$("systemUptime").textContent=dur(sys.uptime_seconds);$("hostMarker").textContent=sys.host_marker||"--"}
+function debugRb(s){return s&&s.debug_uart_readback&&s.debug_uart_readback.ok?s.debug_uart_readback:null}
+function readbackSourceLabel(v){return v==="debug-uart"?"debug UART mod":"original method"}
+function stockProfileFallback(kind, profile){
+  const isStock=(profile&&profile.profile==="stock-mini-g22")||/stock mcu/i.test(String(profile?.label||""))||/vendor stock/i.test(String(profile?.mcu_bridge||""));
+  if(!isStock)return null;
+  return kind==="vddr"?1260:1060;
+}
+function profileVoltageText(kind, profile, stats){
+  const explicit=kind==="vddr"?(profile?.vddr_readback_mv??profile?.vddr_mv??stats?.vddr_mv):(profile?.vcore_readback_mv??profile?.vcore_mv??stats?.vcore_mv);
+  if(Number.isFinite(Number(explicit)))return `${Math.round(Number(explicit))} mV`;
+  const stock=stockProfileFallback(kind, profile);
+  return Number.isFinite(Number(stock))?`${Math.round(Number(stock))} mV`:"unavailable";
+}
+function updateNetworkVisibility(){const mode=$("networkMode").value;$("staticNetworkFields").style.display=mode==="static"?"block":"none"}
+function render(s){if(s.auth_required)return redirectLogin();state=s;const tele=s.telemetry||{},net=s.network||{},limits=s.generator_limits||{},readback=s.readback||{},dbg=debugRb(s);$("coin").value=(s.pool&&s.pool.coin)||"grin";$("url").value=(s.pool&&s.pool.url)||"";$("user").value=(s.pool&&s.pool.user)||"";$("password").value=(s.pool&&s.pool.password)||"x";const fan=s.fan_config||{};$("fanTarget").value=fan.target_c ?? 65;$("fanHard").value=fan.hard_c ?? 70;$("fanMin").value=fan.min_percent ?? 50;$("fanMax").value=fan.max_percent ?? 100;$("networkMode").value=net.mode||"dhcp";$("networkIpaddr").value=net.ipaddr||"192.168.1.113";$("networkNetmask").value=net.netmask||"255.255.255.0";$("networkGateway").value=net.gateway||"192.168.1.1";$("networkDns").value=net.dns||"192.168.1.1";updateNetworkVisibility();$("telemetryEnabled").value=tele.enabled?"1":"0";$("telemetryRequired").value=tele.required?"1":"0";$("telemetryDelay").value=tele.start_delay_seconds ?? 180;$("telemetryInterval").value=tele.interval_seconds ?? 30;$("debugReadbackEnabled").value=readback.enabled?"1":"0";$("debugReadbackSource").value=readback.source||"stock";$("minerState").textContent=s.miner_running?"running":"stopped";$("minerState").className=s.miner_running?"ok":"warn";const stats=s.stats||{},rail=s.rail&&s.rail.rails&&s.rail.rails.core?s.rail.rails.core:{},profile=s.profile||{},useDbg=readback.enabled&&readback.source==="debug-uart"&&dbg;const fallbackVddr=profileVoltageText("vddr",profile,stats),fallbackVcore=profileVoltageText("vcore",profile,stats);$("accepted").textContent=n(stats.accepted);$("duplicates").textContent=n(stats.duplicate_result_frames);$("rejected").textContent=n(stats.rejected);$("ddr").textContent=useDbg?((dbg.ddr_raw_hex||"--")+" / "+(dbg.ddr_mhz||"--")+" MHz"):((stats.mcu_ddr_raw_hex||"--")+" / "+(stats.mcu_ddr_effective_mhz||"--")+" MHz");$("vddr").textContent=useDbg&&n(dbg.vddr_mv)>0?(n(dbg.vddr_mv)+" mV"):fallbackVddr;$("vcore").textContent=useDbg&&n(dbg.vcore_mv)>0?(n(dbg.vcore_mv)+" mV"):(rail.vout_mv>0?rail.vout_mv+" mV":fallbackVcore);$("coreResets").textContent=String(useDbg?n(dbg.core_reset_count,n(stats.mcu_grin_reset_count)):n(stats.mcu_grin_reset_count));$("readbackSource").textContent=useDbg?"debug UART mod":readbackSourceLabel(readback.source||"stock");$("power").textContent=rail.pin_w>0&&tele.health==="fresh"?"Input ~"+Math.round(rail.pin_w)+" W":(s.rail&&s.rail.error==="no_pmbus_values"?"stock mcu / unavailable":(tele.health==="stale"?"telemetry stale":"unavailable"));$("generatorBounds").textContent=`DDR ${limits.ddr_mhz_min ?? "--"} to ${limits.ddr_mhz_max ?? "--"} MHz, Vddr ${limits.vddr_mv_min ?? "--"} to ${limits.vddr_mv_max ?? "--"} mV, Vcore ${limits.vcore_mv_min ?? "--"} to ${limits.vcore_mv_max ?? "--"} mV.`;if(!$("genDdrMhz").value&&profile.ddr_mhz)$("genDdrMhz").value=profile.ddr_mhz;if(!$("genVddrMv").value&&profile.vddr_mv)$("genVddrMv").value=profile.vddr_mv;if(!$("genVcoreMv").value&&profile.vcore_mv)$("genVcoreMv").value=profile.vcore_mv;renderProfiles(s.profiles||[]);renderUploaded(s.uploaded_firmware||[]);renderSystem(s)}
+async function refresh(){const s=await apiJson(api);if(s&&s.ok)render(s)}
+async function refreshHistoryCache(){try{const r=await fetch(bust("/cgi-bin/custom-miner-history"),{credentials:"same-origin",cache:"no-store"});if(r.ok)saveHistoryCache(parsePossiblyBrokenJson(await r.text()))}catch(e){}}
+async function runWithStatus(statusId,fn){try{msg(statusId,"working...","warn");const r=await fn();msg(statusId,r.message||r.error,r.ok?"ok":"bad");if(r.ok)setTimeout(refresh,1000)}catch(e){msg(statusId,String(e),"bad")}}
+$("savePool").onclick=()=>runWithStatus("poolStatus",()=>post("save_pool",{coin:$("coin").value,url:$("url").value,user:$("user").value,password:$("password").value,restart:"0"}));
+$("savePoolRestart").onclick=()=>runWithStatus("poolStatus",()=>post("save_pool",{coin:$("coin").value,url:$("url").value,user:$("user").value,password:$("password").value,restart:"1"}));
+$("saveFan").onclick=()=>runWithStatus("fanStatus",()=>post("save_fan",{fan_auto:"1",fan_target_c:$("fanTarget").value,fan_hard_c:$("fanHard").value,fan_min_percent:$("fanMin").value,fan_max_percent:$("fanMax").value,restart:"0"}));
+$("saveFanRestart").onclick=()=>runWithStatus("fanStatus",()=>post("save_fan",{fan_auto:"1",fan_target_c:$("fanTarget").value,fan_hard_c:$("fanHard").value,fan_min_percent:$("fanMin").value,fan_max_percent:$("fanMax").value,restart:"1"}));
+$("networkMode").onchange=updateNetworkVisibility;
+$("saveNetwork").onclick=()=>runWithStatus("networkStatus",()=>post("save_network",{network_mode:$("networkMode").value,network_ipaddr:$("networkIpaddr").value,network_netmask:$("networkNetmask").value,network_gateway:$("networkGateway").value,network_dns:$("networkDns").value,restart:"0"}));
+$("saveNetworkRestart").onclick=()=>runWithStatus("networkStatus",()=>post("save_network",{network_mode:$("networkMode").value,network_ipaddr:$("networkIpaddr").value,network_netmask:$("networkNetmask").value,network_gateway:$("networkGateway").value,network_dns:$("networkDns").value,restart:"1"}));
+$("saveTelemetry").onclick=()=>runWithStatus("telemetryStatus",()=>post("save_telemetry",{telemetry_enabled:$("telemetryEnabled").value,telemetry_required:$("telemetryRequired").value,telemetry_start_delay_seconds:$("telemetryDelay").value,telemetry_interval_seconds:$("telemetryInterval").value,debug_uart_readback_enabled:$("debugReadbackEnabled").value,debug_uart_readback_source:$("debugReadbackSource").value}));
+$("changePassword").onclick=()=>runWithStatus("passwordStatus",()=>post("change_password",{current_password:$("currentPassword").value,new_password:$("newPassword").value,confirm_password:$("confirmPassword").value}).then(r=>{if(r&&r.ok){$("currentPassword").value="";$("newPassword").value="";$("confirmPassword").value=""}return r;}));
+$("startMiner").onclick=()=>runWithStatus("serviceStatus",()=>post("control",{op:"start"}));
+$("stopMiner").onclick=()=>confirm("Stop the miner?")&&runWithStatus("serviceStatus",()=>post("control",{op:"stop"}));
+$("restartMiner").onclick=()=>runWithStatus("serviceStatus",()=>post("control",{op:"restart"}));
+$("rebootMiner").onclick=()=>confirm("Reboot the whole miner?")&&runWithStatus("serviceStatus",()=>post("control",{op:"reboot"}));
+$("applyProfile").onclick=()=>{const selected=document.querySelector('input[name="profile"]:checked');if(!selected)return msg("profileStatus","select a profile","bad");runWithStatus("profileStatus",()=>post("apply_profile",{profile_id:selected.value,restart:"1"}));};
+$("recoverSafe").onclick=()=>confirm("Restore the bundled safe profile?")&&runWithStatus("recoveryStatus",()=>post("recover",{mode:"safe",restart:"1"}));
+$("uploadFirmware").onclick=()=>{const file=$("firmwareFile").files[0];if(!file)return msg("uploadFirmwareStatus","choose a .bin file first","bad");runWithStatus("uploadFirmwareStatus",()=>uploadRaw("firmware",file));};
+$("uploadManifest").onclick=()=>{const file=$("manifestFile").files[0];if(!file)return msg("uploadManifestStatus","choose a .json file first","bad");runWithStatus("uploadManifestStatus",()=>uploadRaw("manifest",file));};
+$("applyUploaded").onclick=()=>{const selected=document.querySelector('input[name="uploadedFirmware"]:checked');if(!selected)return msg("uploadedStatus","select an uploaded .bin first","bad");runWithStatus("uploadedStatus",()=>post("apply_uploaded",{filename:selected.value,restart:"1"}));};
+$("generateFirmware").onclick=()=>runWithStatus("generateStatus",()=>post("generate_firmware",{ddr_mhz:$("genDdrMhz").value,vddr_mv:$("genVddrMv").value,vcore_mv:$("genVcoreMv").value,apply:"0",restart:"0"}));
+$("generateApplyFirmware").onclick=()=>runWithStatus("generateStatus",()=>post("generate_firmware",{ddr_mhz:$("genDdrMhz").value,vddr_mv:$("genVddrMv").value,vcore_mv:$("genVcoreMv").value,apply:"1",restart:"1"}));
+$("downloadSupport").onclick=()=>{window.location.href=`${api}?action=download_support`;msg("supportStatus","support bundle requested","ok")};
+$("logoutLink").onclick=async e=>{e.preventDefault();await apiJson(`${api}?action=logout`);window.location.href="/login.html"};
+$("showExperimental").onchange=()=>{if(state)render(state)};
+refresh();refreshHistoryCache();setInterval(refresh,15000);setInterval(refreshHistoryCache,10000);
+window.addEventListener("focus",()=>{refresh();refreshHistoryCache()});
+window.addEventListener("pageshow",()=>{refresh();refreshHistoryCache()});
+document.addEventListener("visibilitychange",()=>{if(!document.hidden){refresh();refreshHistoryCache()}});
+</script>
+</body>
+</html>

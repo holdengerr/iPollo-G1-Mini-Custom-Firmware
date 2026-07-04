@@ -1,0 +1,56 @@
+#!/bin/sh
+
+json_escape() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g; s/\r/\\r/g; s/\n/\\n/g'; }
+
+append_readback_fields() {
+	local base="$1" source enabled file debug_json trimmed
+	source="$(/usr/bin/g1m-config get debug_uart_readback_source stock 2>/dev/null || echo stock)"
+	enabled="$(/usr/bin/g1m-config get debug_uart_readback_enabled 0 2>/dev/null || echo 0)"
+	file="$(/usr/bin/g1m-config get debug_uart_readback_file /tmp/ttyS2-debug-raw.bin 2>/dev/null || echo /tmp/ttyS2-debug-raw.bin)"
+	debug_json="$(/usr/bin/g1m-debug-readback "$file" 2>/dev/null || echo '{"ok":false,"error":"helper unavailable","source":"debug-uart"}')"
+	trimmed="$(printf '%s' "$base" | sed 's/}[[:space:]]*$//')"
+	printf '%s,"dashboard_readback_source":"%s","readback":{"enabled":%s,"source":"%s","capture_file":"%s"},"debug_uart_readback":%s}\n' \
+		"$trimmed" "$(json_escape "$source")" "$([ "$enabled" = "1" ] && echo true || echo false)" \
+		"$(json_escape "$source")" "$(json_escape "$file")" "$debug_json"
+}
+
+stats=/tmp/custom-miner-stats.json
+if [ -s "$stats" ]; then
+	append_readback_fields "$(cat "$stats")"
+	exit 0
+fi
+
+running=0
+if pidof lua >/dev/null 2>&1 && ps w 2>/dev/null | grep -q '[c]ustom-grin-miner.lua'; then
+	running=1
+fi
+
+pool_json="$(/usr/bin/g1m-config pool-json 2>/dev/null || echo '{}')"
+state_json="$(/usr/bin/g1m-config state-json 2>/dev/null || echo '{}')"
+release_json="$(/usr/bin/g1m-config release-json 2>/dev/null || echo '{}')"
+
+printf '{'
+printf '"schema":"custom-ipollo-miner-v1",'
+printf '"status":"%s",' "$([ "$running" = 1 ] && echo running || echo stopped)"
+printf '"miner":"custom-grin-uart-lua",'
+printf '"note":"stats file not present yet",'
+printf '"static_ip":"192.168.1.113",'
+printf '"time":%s,' "$(date +%s 2>/dev/null || echo 0)"
+printf '"pool":%s,' "$pool_json"
+printf '"g1m_state":%s,' "$state_json"
+printf '"release":%s,' "$release_json"
+printf '"configured_pool_user":"%s",' "$(jsonfilter -s "$pool_json" -e '@.user' 2>/dev/null | sed 's/"/\\"/g')"
+printf '"configured_pool_url":"%s",' "$(jsonfilter -s "$pool_json" -e '@.url' 2>/dev/null | sed 's/"/\\"/g')"
+printf '"mtd":'
+if [ -r /proc/mtd ]; then
+	awk 'BEGIN{printf "["} NR>1{gsub(/"/,"",$4); printf "%s{\"dev\":\"%s\",\"name\":\"%s\",\"size\":\"%s\"}", sep, $1, $4, $2; sep=","} END{printf "]"}' /proc/mtd
+else
+	printf '[]'
+fi
+printf ',"dashboard_readback_source":"%s","readback":{"enabled":%s,"source":"%s","capture_file":"%s"},"debug_uart_readback":%s' \
+	"$([ -n "$(/usr/bin/g1m-config get debug_uart_readback_source stock 2>/dev/null)" ] && /usr/bin/g1m-config get debug_uart_readback_source stock 2>/dev/null || echo stock)" \
+	"$([ "$(/usr/bin/g1m-config get debug_uart_readback_enabled 0 2>/dev/null || echo 0)" = "1" ] && echo true || echo false)" \
+	"$([ -n "$(/usr/bin/g1m-config get debug_uart_readback_source stock 2>/dev/null)" ] && /usr/bin/g1m-config get debug_uart_readback_source stock 2>/dev/null || echo stock)" \
+	"$(json_escape "$(/usr/bin/g1m-config get debug_uart_readback_file /tmp/ttyS2-debug-raw.bin 2>/dev/null || echo /tmp/ttyS2-debug-raw.bin)")" \
+	"$(/usr/bin/g1m-debug-readback "$(/usr/bin/g1m-config get debug_uart_readback_file /tmp/ttyS2-debug-raw.bin 2>/dev/null || echo /tmp/ttyS2-debug-raw.bin)" 2>/dev/null || echo '{"ok":false,"error":"helper unavailable","source":"debug-uart"}')"
+printf '}'

@@ -1,0 +1,5 @@
+#!/bin/sh
+echo "Content-Type: application/json"
+echo "Cache-Control: no-store"
+echo
+/usr/bin/g1m-history json 2>/dev/null || echo '[]'

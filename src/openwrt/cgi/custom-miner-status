@@ -1,0 +1,23 @@
+#!/bin/sh
+echo "Content-Type: application/json"
+echo
+stats="$(/usr/bin/custom-miner-status 2>/dev/null)"
+[ -n "$stats" ] || stats='{"error":"custom-miner-status failed"}'
+rail="$(cat /tmp/g1-rail-telemetry.json 2>/dev/null)"
+controller_running=0
+pool_connected=0
+if ps w 2>/dev/null | grep -q '[c]ustom-grin-miner.lua'; then controller_running=1; fi
+if netstat -tn 2>/dev/null | grep -q ':3030 .*ESTABLISHED'; then pool_connected=1; fi
+if [ "$controller_running" = 0 ]; then
+	status_extra=',"status":"controller-stopped","controller_running":false,"pool_connected":'"$([ "$pool_connected" = 1 ] && echo true || echo false)"',"status_note":"custom Lua controller stopped"'
+else
+	[ "$controller_running" = 1 ] && cr=true || cr=false
+	[ "$pool_connected" = 1 ] && pc=true || pc=false
+	status_extra=',"controller_running":'"$cr"',"pool_connected":'"$pc"
+fi
+printf '%s' "$stats" | sed 's/[[:space:]]*$//' | sed 's/}$//'
+printf '%s' "$status_extra"
+case "$rail" in
+	'{'*'}') printf ',"rail_telemetry":%s}' "$rail" ;;
+	*) printf '}' ;;
+esac

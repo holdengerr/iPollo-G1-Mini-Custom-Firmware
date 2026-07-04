@@ -1,0 +1,271 @@
+#!/bin/sh /etc/rc.common
+START=99
+STOP=10
+
+APP=custom-miner
+PID_FILE=/var/run/$APP.pid
+HEALTH_PID_FILE=/var/run/g1m-boot-health.pid
+HISTORY_PID_FILE=/var/run/g1m-history.pid
+DEBUG_CAPTURE_PID_FILE=/var/run/g1m-debug-capture.pid
+LOG_FILE=/tmp/custom-miner.log
+STATS_FILE=/tmp/custom-miner-stats.json
+WORKDIR=/tmp/custom-miner-runs
+MINER_SCRIPT="${MINER_SCRIPT:-/usr/bin/custom-grin-miner.lua}"
+DDR_ACCOUNT_PATH="${DDR_ACCOUNT_PATH:-/root/custom-miner-ddr-accounting.json}"
+CUSTOM_MCU_LOADER_ARGS="${CUSTOM_MCU_LOADER_ARGS:---load --force-load --bus 0 --reset-delay-ms 200 --probe-window-ms 0 --reopen-after-reset --stock-write-compat --quiet}"
+
+cfg() { /usr/bin/g1m-config get "$1" "$2"; }
+
+shell_escape_sq() {
+	printf '%s' "$1" | sed "s/'/'\\\\''/g"
+}
+
+write_state_file() {
+	local tmp=/root/g1m-state.env.$$
+	cat > "$tmp" <<EOF
+ACTIVE_PROFILE_ID='$(shell_escape_sq "${ACTIVE_PROFILE_ID:-}")'
+ACTIVE_PROFILE_LABEL='$(shell_escape_sq "${ACTIVE_PROFILE_LABEL:-}")'
+ACTIVE_PROFILE_CLASS='$(shell_escape_sq "${ACTIVE_PROFILE_CLASS:-}")'
+PRIOR_PROFILE_ID='$(shell_escape_sq "${PRIOR_PROFILE_ID:-}")'
+PRIOR_PROFILE_LABEL='$(shell_escape_sq "${PRIOR_PROFILE_LABEL:-}")'
+LAST_ARTIFACT='$(shell_escape_sq "${LAST_ARTIFACT:-}")'
+BOOT_ATTEMPTS='$(shell_escape_sq "${BOOT_ATTEMPTS:-0}")'
+LAST_SUCCESS_EPOCH='$(shell_escape_sq "${LAST_SUCCESS_EPOCH:-0}")'
+LAST_RECOVERY_REASON='$(shell_escape_sq "${LAST_RECOVERY_REASON:-}")'
+LAST_RECOVERY_EPOCH='$(shell_escape_sq "${LAST_RECOVERY_EPOCH:-0}")'
+LAST_FAILURE_REASON='$(shell_escape_sq "${LAST_FAILURE_REASON:-}")'
+EOF
+	mv "$tmp" /root/g1m-state.env
+}
+
+apply_perf_tuning() {
+	[ -x /usr/bin/g1-perf-setup ] && /usr/bin/g1-perf-setup >/tmp/g1-perf-setup.log 2>&1 || true
+}
+
+fix_network_route() {
+	local mode gateway
+	mode="$(cfg network_mode static)"
+	ip link set eth0 up 2>/dev/null || true
+	ip route del default dev eth0 2>/dev/null || true
+	if [ "$mode" = "dhcp" ]; then
+		return 0
+	fi
+	gateway="$(cfg network_gateway 192.168.1.1)"
+	ip addr del 192.168.1.113/24 dev eth0 2>/dev/null || true
+	[ -n "$gateway" ] && ip route replace default via "$gateway" dev br-lan 2>/dev/null || true
+}
+
+led_set() {
+	local led="$1" value="$2"
+	[ -d "$led" ] || return 0
+	echo none > "$led/trigger" 2>/dev/null || true
+	echo "$value" > "$led/brightness" 2>/dev/null || true
+}
+
+led_ok() {
+	led_set /sys/class/leds/red:status 0
+	led_set /sys/class/leds/green:pwr 255
+}
+
+led_fault() {
+	led_set /sys/class/leds/red:status 255
+	led_set /sys/class/leds/green:pwr 0
+}
+
+mark_failure() {
+	/usr/bin/g1m-config ensure >/dev/null 2>&1 || true
+	if [ -f /root/g1m-state.env ]; then
+		# shellcheck disable=SC1091
+		. /root/g1m-state.env
+	fi
+	LAST_FAILURE_REASON="$1"
+	LAST_RECOVERY_REASON=""
+	write_state_file
+}
+
+begin_boot_guard() {
+	/usr/bin/g1m-config ensure >/dev/null 2>&1 || true
+	# shellcheck disable=SC1091
+	[ -f /root/g1m-state.env ] && . /root/g1m-state.env
+	BOOT_ATTEMPTS="${BOOT_ATTEMPTS:-0}"
+	BOOT_ATTEMPTS=$((BOOT_ATTEMPTS + 1))
+	write_state_file
+	echo "boot guard: boot attempt ${BOOT_ATTEMPTS}; auto-recovery disabled" >> "$LOG_FILE"
+}
+
+mcu_init() {
+	[ "${CUSTOM_MCU_INIT:-1}" = "1" ] || return 0
+	[ -x /usr/bin/custom-mcu-loader ] || { echo "missing /usr/bin/custom-mcu-loader"; return 1; }
+	/usr/bin/custom-mcu-loader $CUSTOM_MCU_LOADER_ARGS || return 1
+	/usr/bin/custom-mcu-loader --status || return 1
+	return 0
+}
+
+start_debug_capture() {
+	local file baud
+	[ "$(cfg debug_uart_readback_enabled 0)" = "1" ] || return 0
+	[ "$(cfg debug_uart_readback_source stock)" = "debug-uart" ] || return 0
+	[ -x /usr/bin/g1m-debug-capture ] || return 0
+	[ -c /dev/ttyS2 ] || return 0
+
+	file="$(cfg debug_uart_readback_file /tmp/ttyS2-debug-raw.bin)"
+	baud="$(cfg debug_uart_readback_baud 3000000)"
+	start-stop-daemon -K -p "$DEBUG_CAPTURE_PID_FILE" -s TERM >/dev/null 2>&1 || true
+	kill "$(cat "$DEBUG_CAPTURE_PID_FILE" 2>/dev/null)" >/dev/null 2>&1 || true
+	killall g1m-debug-capture >/dev/null 2>&1 || true
+	rm -f "$DEBUG_CAPTURE_PID_FILE" "$file"
+	echo "starting debug UART readback capture on /dev/ttyS2 at ${baud}" >> "$LOG_FILE"
+	start-stop-daemon -S -m -p "$DEBUG_CAPTURE_PID_FILE" -b -x /usr/bin/g1m-debug-capture -- /dev/ttyS2 "$file" "$baud" >> "$LOG_FILE" 2>&1 || true
+}
+
+stop_debug_capture() {
+	start-stop-daemon -K -p "$DEBUG_CAPTURE_PID_FILE" -s TERM >/dev/null 2>&1 || true
+	kill "$(cat "$DEBUG_CAPTURE_PID_FILE" 2>/dev/null)" >/dev/null 2>&1 || true
+	killall g1m-debug-capture >/dev/null 2>&1 || true
+	rm -f "$DEBUG_CAPTURE_PID_FILE"
+}
+
+preflight() {
+	local url user
+	url="$(cfg grin_pool_url "")"
+	user="$(cfg grin_pool_user "")"
+	[ -x /usr/bin/lua ] || { echo "missing /usr/bin/lua"; return 1; }
+	[ -x /usr/bin/nc ] || { echo "missing /usr/bin/nc"; return 1; }
+	[ -x /usr/bin/custom-serialctl ] || { echo "missing /usr/bin/custom-serialctl"; return 1; }
+	[ -x /usr/bin/custom-mcu-loader ] || { echo "missing /usr/bin/custom-mcu-loader"; return 1; }
+	[ -f "$MINER_SCRIPT" ] || { echo "missing custom miner: $MINER_SCRIPT"; return 1; }
+	[ -c /dev/ttyS1 ] || { echo "missing /dev/ttyS1"; return 1; }
+	[ -n "$url" ] || { echo "missing grin pool url"; return 1; }
+	[ -n "$user" ] || { echo "missing grin pool user"; return 1; }
+	[ "$user" != "CHANGE_ME" ] || { echo "pool user is still CHANGE_ME"; return 1; }
+	/usr/bin/lua -e "assert(loadfile('$MINER_SCRIPT')); print('lua syntax ok')" || return 1
+	return 0
+}
+
+start() {
+	mkdir -p "$WORKDIR"
+	/usr/bin/g1m-config ensure >/dev/null 2>&1 || true
+	begin_boot_guard
+	if [ -f /tmp/custom-grin-miner.lua ]; then
+		MINER_SCRIPT=/tmp/custom-grin-miner.lua
+	fi
+	echo "starting $APP" > "$LOG_FILE"
+	echo "script $MINER_SCRIPT" >> "$LOG_FILE"
+	rm -f "$STATS_FILE" "$STATS_FILE.tmp" "$DDR_ACCOUNT_PATH"
+	rm -f /etc/rc.d/S99cgminer /etc/rc.d/K10cgminer 2>/dev/null || true
+	sed -i '/cgminer-monitor/d' /etc/crontabs/root 2>/dev/null || true
+	killall cgminer >/dev/null 2>&1 || true
+	rm -f /var/run/cgminer.pid /tmp/.uci/cgminer 2>/dev/null || true
+	apply_perf_tuning
+	fix_network_route
+	preflight >> "$LOG_FILE" 2>&1 || {
+		echo "preflight failed; miner not started" >> "$LOG_FILE"
+		mark_failure "preflight-failed"
+		led_fault
+		return 1
+	}
+	echo "running standalone custom MCU init" >> "$LOG_FILE"
+	mcu_init >> "$LOG_FILE" 2>&1 || {
+		echo "MCU init failed; miner not started" >> "$LOG_FILE"
+		mark_failure "mcu-init-failed"
+		led_fault
+		return 1
+	}
+	fix_network_route
+	led_ok
+	export FAN_AUTO="${FAN_AUTO:-$(cfg fan_auto 1)}"
+	export FAN_TARGET_C="${FAN_TARGET_C:-$(cfg fan_target_c 55)}"
+	export FAN_MIN_PERCENT="${FAN_MIN_PERCENT:-$(cfg fan_min_percent 50)}"
+	export FAN_MAX_PERCENT="${FAN_MAX_PERCENT:-$(cfg fan_max_percent 100)}"
+	export FAN_HARD_C="${FAN_HARD_C:-$(cfg fan_hard_c 70)}"
+	export PWM_HELPER="${PWM_HELPER:-/usr/bin/custom-pwmctl}"
+	export MCU_POLL_MODE="${MCU_POLL_MODE:-ddr}"
+	export DDR_ACCOUNT_PATH
+	export MCU_POLL_INTERVAL_SECONDS="${MCU_POLL_INTERVAL_SECONDS:-60}"
+	export MCU_GOVERNOR_POLL="${MCU_GOVERNOR_POLL:-0}"
+	export UART_DRAIN_MS="${UART_DRAIN_MS:-250}"
+	export SKIP_STOCK_STOP="${SKIP_STOCK_STOP:-1}"
+	export SKIP_STOCK_RESTORE="${SKIP_STOCK_RESTORE:-1}"
+	export ENABLE_RESULT_REFRESH="${ENABLE_RESULT_REFRESH:-1}"
+	export NO_RESULT_REFRESH_SECONDS="${NO_RESULT_REFRESH_SECONDS:-60}"
+	export NO_ACCEPT_REFRESH_SECONDS="${NO_ACCEPT_REFRESH_SECONDS:-120}"
+	export MIN_WORK_SET_INTERVAL_SECONDS="${MIN_WORK_SET_INTERVAL_SECONDS:-20}"
+	export RESULT_REFRESH_MIN_INTERVAL_SECONDS="${RESULT_REFRESH_MIN_INTERVAL_SECONDS:-20}"
+	export NO_ACCEPT_WORK_REFRESH_SECONDS="${NO_ACCEPT_WORK_REFRESH_SECONDS:-600}"
+	export DUPLICATE_RESULT_REFRESH_THRESHOLD="${DUPLICATE_RESULT_REFRESH_THRESHOLD:-8}"
+	export ADJACENT_DUPLICATE_REFRESH_THRESHOLD="${ADJACENT_DUPLICATE_REFRESH_THRESHOLD:-2}"
+	export ADJACENT_DUPLICATE_REFRESH_WINDOW_SECONDS="${ADJACENT_DUPLICATE_REFRESH_WINDOW_SECONDS:-90}"
+	export ADJACENT_DUPLICATE_QUARANTINE_SECONDS="${ADJACENT_DUPLICATE_QUARANTINE_SECONDS:-20}"
+	export ADJACENT_DUPLICATE_REFRESH_MIN_ACCEPT_AGE_SECONDS="${ADJACENT_DUPLICATE_REFRESH_MIN_ACCEPT_AGE_SECONDS:-30}"
+	export UNKNOWN_RESULT_REFRESH_THRESHOLD="${UNKNOWN_RESULT_REFRESH_THRESHOLD:-12}"
+	export JOB_ID_DEBOUNCE_SECONDS="${JOB_ID_DEBOUNCE_SECONDS:-15}"
+	export PREPOW_DEBOUNCE_SECONDS="${PREPOW_DEBOUNCE_SECONDS:-5}"
+	export TWO_MINERS_STALE_GRACE_SECONDS="${TWO_MINERS_STALE_GRACE_SECONDS:-45}"
+	export DUPLICATE_PROOF_RELAX_MAX_PER_HOUR="${DUPLICATE_PROOF_RELAX_MAX_PER_HOUR:-12}"
+	export FAN_CONTROL_INTERVAL_SECONDS="${FAN_CONTROL_INTERVAL_SECONDS:-20}"
+	export FAN_PWM_REAPPLY_SECONDS="${FAN_PWM_REAPPLY_SECONDS:-120}"
+	export SENSOR_POLL_INTERVAL_SECONDS="${SENSOR_POLL_INTERVAL_SECONDS:-10}"
+	export STATS_WRITE_INTERVAL_SECONDS="${STATS_WRITE_INTERVAL_SECONDS:-10}"
+	export DIAG_SAMPLE_LIMIT="${DIAG_SAMPLE_LIMIT:-12}"
+	export DIAG_HEAVY_SAMPLE_LIMIT="${DIAG_HEAVY_SAMPLE_LIMIT:-8}"
+	export DIAG_DDR_SAMPLE_LIMIT="${DIAG_DDR_SAMPLE_LIMIT:-20}"
+	export FAULT_LED="${FAULT_LED:-/sys/class/leds/red:status}"
+	export OK_LED="${OK_LED:-/sys/class/leds/green:pwr}"
+	export INTER_WORK_FRAME_DELAY_MS="${INTER_WORK_FRAME_DELAY_MS:-30}"
+	export G1M_POOL_JSON="${G1M_POOL_JSON:-$(/usr/bin/g1m-config pool-json 2>/dev/null)}"
+	if [ -x /usr/bin/g1-railmon ] && [ "$(cfg rail_telemetry_enabled 1)" = "1" ]; then
+		start-stop-daemon -K -p /var/run/g1-railmon.pid -s TERM >/dev/null 2>&1 || true
+		killall g1-railmon >/dev/null 2>&1 || true
+		rm -f /var/run/g1-railmon.pid
+		(
+			sleep "$(cfg rail_telemetry_start_delay_seconds 180)"
+			[ -f "$PID_FILE" ] || exit 0
+			miner_pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+			[ -n "$miner_pid" ] && kill -0 "$miner_pid" 2>/dev/null || exit 0
+			start-stop-daemon -S -m -p /var/run/g1-railmon.pid -b -x /usr/bin/g1-railmon -- --interval "$(cfg rail_telemetry_interval_seconds 30)" --output /tmp/g1-rail-telemetry.json >> "$LOG_FILE" 2>&1 || true
+		) >> "$LOG_FILE" 2>&1 &
+	fi
+	start-stop-daemon -S -p "$PID_FILE" -m -b -x /usr/bin/lua -- \
+		"$MINER_SCRIPT" 31536000 180 "$STATS_FILE" /dev/ttyS1 1800 0 0 0 1 1 0.614 1 30 >> "$LOG_FILE" 2>&1 || {
+		mark_failure "miner-launch-failed"
+		led_fault
+		return 1
+	}
+	sleep 1
+	start_debug_capture
+	apply_perf_tuning
+	if [ -x /usr/bin/g1m-boot-health ]; then
+		start-stop-daemon -K -p "$HEALTH_PID_FILE" -s TERM >/dev/null 2>&1 || true
+		start-stop-daemon -S -p "$HEALTH_PID_FILE" -m -b -x /usr/bin/g1m-boot-health -- monitor >> "$LOG_FILE" 2>&1 || true
+	fi
+	if [ -x /usr/bin/g1m-history ]; then
+		start-stop-daemon -K -p "$HISTORY_PID_FILE" -s TERM >/dev/null 2>&1 || true
+		start-stop-daemon -S -p "$HISTORY_PID_FILE" -m -b -x /usr/bin/g1m-history -- run >> "$LOG_FILE" 2>&1 || true
+	fi
+}
+
+stop() {
+	stop_debug_capture
+	start-stop-daemon -K -p "$HEALTH_PID_FILE" -s TERM >/dev/null 2>&1 || true
+	kill "$(cat "$HEALTH_PID_FILE" 2>/dev/null)" >/dev/null 2>&1 || true
+	rm -f "$HEALTH_PID_FILE"
+	start-stop-daemon -K -p "$HISTORY_PID_FILE" -s TERM >/dev/null 2>&1 || true
+	kill "$(cat "$HISTORY_PID_FILE" 2>/dev/null)" >/dev/null 2>&1 || true
+	rm -f "$HISTORY_PID_FILE"
+	start-stop-daemon -K -p "$PID_FILE" -s TERM >/dev/null 2>&1 || true
+	kill "$(cat "$PID_FILE" 2>/dev/null)" >/dev/null 2>&1 || true
+	start-stop-daemon -K -p /var/run/g1-railmon.pid -s TERM >/dev/null 2>&1 || true
+	kill "$(cat /var/run/g1-railmon.pid 2>/dev/null)" >/dev/null 2>&1 || true
+	killall g1-railmon >/dev/null 2>&1 || true
+	rm -f /var/run/g1-railmon.pid /tmp/g1-rail-telemetry.json /tmp/g1-rail-telemetry.json.tmp
+	killall custom-fantach >/dev/null 2>&1 || true
+	killall nc >/dev/null 2>&1 || true
+	sleep 2
+	led_fault
+	rm -f "$PID_FILE"
+}
+
+restart() {
+	stop
+	start
+}
