@@ -63,6 +63,12 @@ Bundled profiles:
 - on-device MCU firmware generator for voltage/frequency experiments
 - firmware upload/apply flow for external MCU artifacts
 
+## Current Support Scope
+
+- custom uploaded MCU firmware is not yet part of the supported public workflow
+- the supported tuning path right now is the on-device MCU generator
+- debug UART bridge instructions are still being prepared and will be documented later
+
 ## Support And Feedback
 
 If you hit a bug, regression, hardware-compatibility problem, or unclear behavior, please open a GitHub issue in this repository.

@@ -87,10 +87,16 @@ This intentionally resets the miner to the bundled safe profile rather than usin
 
 ## Firmware Upload
 
-Two supported firmware workflows exist:
+Two firmware workflows are present in the UI:
 
 1. upload external MCU firmware + manifest, then apply
 2. generate MCU firmware on-device from entered DDR / Vddr / Vcore values
+
+Current public support boundary:
+
+- custom uploaded MCU firmware is not yet a supported path
+- the supported tuning path is the on-device generator
+- debug UART bridge instructions are still pending and are not documented here yet
 
 The generator path is intended to reduce file juggling during tuning.
 
@@ -115,4 +121,3 @@ It is intended to include:
 - current stats
 - telemetry snapshot
 - stored miner history buffer
-
